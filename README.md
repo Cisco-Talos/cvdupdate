@@ -48,13 +48,19 @@ cvd --help
 > python -m cvdupdate --help
 > ```
 
+(optional) You may wish to customize where the databases are stored:
+
+```bash
+cvd config set --dbdir <your www path>
+```
+
 Run this to download the latest database and associated CDIFF patch files:
 
 ```bash
 cvd update
 ```
 
-Downloaded databases will be placed in `~/.cvdupdate/database`.
+Downloaded databases will be placed in `~/.cvdupdate/database` unless you customized it to use a different directory.
 
 Newly downloaded databases will replace the previous database version, but the CDIFF patch files will accumulate up to a configured maximum before it starts deleting old CDIFFs (default: 30 CDIFFs). You can configure it to keep more CDIFFs by manually editing the config (default: `~/.cvdupdate/config.json`). The same behavior applies for cvdupdate log rotation.
 
