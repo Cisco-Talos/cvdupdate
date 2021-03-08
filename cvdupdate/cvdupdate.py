@@ -369,7 +369,14 @@ class CVDUpdate:
         self.logger.debug(f"Checking available versions via DNS TXT entry query of current.cvd.clamav.net")
 
         try:
-            answer = str(resolver.resolve("current.cvd.clamav.net","TXT").response.answer[0])
+            our_resolver = resolver.Resolver()
+            nameserver = os.environ.get("CVDUPDATE_NAMESERVER")
+
+            if nameserver != None:
+                our_resolver.nameservers = [nameserver]
+                self.logger.info(f"Using nameserver specified in CVDUPDATE_NAMESERVER: {nameserver}")
+
+            answer = str(our_resolver.resolve("current.cvd.clamav.net","TXT").response.answer[0])
             versions = re.search('".*"', answer).group().strip('"')
             self.dns_version_tokens = versions.split(':')
             got_it = True
