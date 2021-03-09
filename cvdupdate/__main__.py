@@ -134,15 +134,21 @@ def config():
 @config.command("set")
 @click.option("--config", "-c", type=click.Path(), required=False, default="", help="Config path. [optional]")
 @click.option("--verbose", "-V", is_flag=True, default=False, help="Verbose output. [optional]")
-@click.option("--logdir", "-l", type=click.Path(), required=False, default="")
-@click.option("--dbdir", "-d", type=click.Path(), required=False, default="")
-def config_set(config: str, verbose: bool, logdir: str, dbdir: str):
+@click.option("--logdir", "-l", type=click.Path(), required=False, default="", help="Set a custom log directory. [optional]")
+@click.option("--dbdir", "-d", type=click.Path(), required=False, default="", help="Set a custom database directory. [optional]")
+@click.option("--nameserver", "-n", type=click.STRING, required=False, default="", help="Set a custom DNS nameserver. [optional]")
+def config_set(config: str, verbose: bool, logdir: str, dbdir: str, nameserver: str):
     """
     Set up first time configuration.
 
-    If you don't set config paths, the defaults will be in ~/.cvdupdate
+    The default directories will be in ~/.cvdupdate
     """
-    CVDUpdate(config=config, verbose=verbose, log_dir=logdir, db_dir=dbdir)
+    CVDUpdate(
+        config=config,
+        verbose=verbose,
+        log_dir=logdir,
+        db_dir=dbdir,
+        nameserver=nameserver)
 
 @config.command("show")
 @click.option("--config", "-c", type=click.Path(), required=False, default="", help="Config path. [optional]")

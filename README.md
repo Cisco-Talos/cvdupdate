@@ -92,7 +92,21 @@ Run `cvd update` as often as you need.  Maybe put it in a `cron` job.
 
 ## Optional Functionality
 
-If a specific nameserver is required for `cvdupdate` to function properly (to gather the TXT record containing the current definition database version), please specify the IP address of the nameserver in the environment variable `CVDUPDATE_NAMESERVER` to ensure said nameserver is used when querying the TXT record containing the current database definition version available.
+DNS is required for `cvdupdate` to function properly (to gather the TXT record containing the current definition database version). You can select a specific nameserver to ensure said nameserver is used when querying the TXT record containing the current database definition version available
+
+1. Set the nameserver in the config. Eg:
+
+   ```bash
+   cvd config set --nameserver 208.67.222.222
+   ```
+
+2. Set the environment variable `CVDUPDATE_NAMESERVER`. Eg:
+
+   ```bash
+   CVDUPDATE_NAMESERVER="208.67.222.222" cvd update
+   ```
+
+The environment variable will take precedence over the nameserver config setting.
 
 ## Files and directories created by cvdupdate
 

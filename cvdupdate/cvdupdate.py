@@ -38,6 +38,8 @@ class CVDUpdate:
     default_config_path: Path = Path.home() / ".cvdupdate" / "config.json"
 
     default_config: dict = {
+        "nameserver" : "",
+
         "log directory" : str(Path.home() / ".cvdupdate" / "logs"),
         "rotate logs" : True,
         "# logs to keep" : 30,
@@ -88,6 +90,7 @@ class CVDUpdate:
         config: str  = "",
         log_dir: str = "",
         db_dir: str  = "",
+        nameserver: str  = "",
         verbose: bool = False,
     ) -> None:
         """
@@ -100,7 +103,11 @@ class CVDUpdate:
         """
         self.version = pkg_resources.get_distribution('cvdupdate').version
         self.verbose = verbose
-        self._read_config(config, db_dir, log_dir)
+        self._read_config(
+            config,
+            db_dir,
+            log_dir,
+            nameserver)
         self._init_logging()
 
     def _init_logging(self) -> None:
@@ -146,7 +153,11 @@ class CVDUpdate:
         urllib3_logger = logging.getLogger("urllib3.connectionpool")
         urllib3_logger.setLevel(self.logger.level)
 
-    def _read_config(self, config: str, db_dir: str, log_dir: str) -> None:
+    def _read_config(self,
+                     config: str,
+                     db_dir: str,
+                     log_dir: str,
+                     nameserver: str) -> None:
         """
         Read in the config file.
         Create a new one if one does not already exist.
@@ -176,6 +187,15 @@ class CVDUpdate:
             self.config["log directory"] = log_dir
             need_save = True
         self.log_dir = Path(self.config["log directory"])
+
+        if nameserver != "":
+            self.config['nameserver'] = nameserver
+            need_save = True
+
+        # For backwards compatibility with older configs.
+        if 'nameserver' not in self.config:
+            self.config['nameserver'] = ""
+            need_save = True
 
         if need_save:
             self._save_config()
@@ -266,7 +286,7 @@ class CVDUpdate:
                     try:
                         version = self._get_cvd_version_from_file(db)
                     except Exception as exc:
-                        self.logger.debug(f"Exception occurred:\n{exc}")
+                        self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                         self.logger.error(f"Failed to determine version for {db.name}")
 
                 dbs[db.name] = {
@@ -292,7 +312,7 @@ class CVDUpdate:
                         self.config['dbs'][db.name]['local version'] = dbs[db.name]['local version']
                         need_save = True
                     except Exception as exc:
-                        self.logger.debug(f"Exception occurred:\n{exc}")
+                        self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                         self.logger.error(f"Failed to determine version # of mysterious {db.name} file. Perhaps it is corrupted?")
 
         if need_save:
@@ -373,15 +393,21 @@ class CVDUpdate:
             nameserver = os.environ.get("CVDUPDATE_NAMESERVER")
 
             if nameserver != None:
+                # Override the default nameserver using the CVDUPDATE_NAMESERVER environment variable.
                 our_resolver.nameservers = [nameserver]
                 self.logger.info(f"Using nameserver specified in CVDUPDATE_NAMESERVER: {nameserver}")
+
+            elif self.config['nameserver'] != "":
+                # Override the default nameserver using a config setting.
+                our_resolver.nameservers = [self.config['nameserver']]
+                self.logger.info(f"Using nameserver specified in the config: {self.config['nameserver']}")
 
             answer = str(our_resolver.resolve("current.cvd.clamav.net","TXT").response.answer[0])
             versions = re.search('".*"', answer).group().strip('"')
             self.dns_version_tokens = versions.split(':')
             got_it = True
         except Exception as exc:
-            self.logger.debug(f"Exception occurred:\n{exc}")
+            self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
             self.logger.warning(f"Failed to determine available version via DNS TXT query!")
 
         return got_it
@@ -394,7 +420,11 @@ class CVDUpdate:
         version = 0
 
         if self.dns_version_tokens == []:
+            # Query DNS if we haven't already
             self._query_dns_txt_entry()
+            if self.dns_version_tokens == []:
+                # Query failed. Bail out.
+                return version
 
         self.logger.debug(f"Checking {db} version via DNS TXT advertisement.")
 
@@ -411,7 +441,7 @@ class CVDUpdate:
             self.config['dbs'][db]['last checked'] = time.time()
 
         except Exception as exc:
-            self.logger.debug(f"Exception occurred:\n{exc}")
+            self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
             self.logger.warning(f"Failed to get DB version from DNS TXT entry!")
 
         return version
@@ -427,7 +457,11 @@ class CVDUpdate:
         url = self.config['dbs'][db]['url']
 
         if self.dns_version_tokens == []:
+            # Query DNS if we haven't already. We'll use the latest ClamAV version in the User-Agent.
             self._query_dns_txt_entry()
+            if self.dns_version_tokens == []:
+                # Query failed. Bail out.
+                return version
 
         self.logger.debug(f"Checking {db} version via HTTP download of CVD header.")
 
@@ -505,7 +539,7 @@ class CVDUpdate:
                     self.config['dbs'][db]['local version'] = self._get_version_from_cvd_header(response.content[:96])
 
             except Exception as exc:
-                self.logger.debug(f"Exception occurred:\n{exc}")
+                self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                 self.logger.error(f"Failed to save {db} to {self.db_dir}")
                 return False
 
@@ -594,7 +628,7 @@ class CVDUpdate:
                         self.config['dbs'][db]['CDIFFs'] = self.config['dbs'][db]['CDIFFs'][1:]
 
                 except Exception as exc:
-                    self.logger.debug(f"Exception occurred:\n{exc}")
+                    self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                     self.logger.error(f"Failed to save {cdiff_filename} to {self.db_dir}.")
 
             elif response.status_code == 429:
@@ -645,7 +679,7 @@ class CVDUpdate:
         try:
             version_found = int(header_fields[2])
         except Exception as exc:
-            self.logger.debug(f"Exception occurred:\n{exc}")
+            self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
             self.logger.error(f"Failed to determine version from CVD header!")
 
         return version_found
@@ -668,7 +702,7 @@ class CVDUpdate:
                 version_found = self._get_version_from_cvd_header(cvd_header)
 
         except Exception as exc:
-            self.logger.debug(f"Exception occurred:\n{exc}")
+            self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
             self.logger.error(f"Failed to read version from CVD header from {path}.")
 
         if version_found == 0:
@@ -702,11 +736,8 @@ class CVDUpdate:
                     self.logger.info(f"{db} cooldown expired {cooldown_date}. OK to try again...")
 
             if not self.config['dbs'][db]['url'].startswith('http'):
-                self.logger.error(f"Update failed. Missing or invalid URL: {self.config['dbs'][db]['url']}")
+                self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
                 return False
-
-            if self.dns_version_tokens == []:
-                self._query_dns_txt_entry()
 
             self.logger.debug(f"Checking {db} for update from {self.config['dbs'][db]['url']}")
 
@@ -728,6 +759,10 @@ class CVDUpdate:
                     # We can't use DNS to see if our version is old.
                     # Use HTTP to pull just the CVD header to check.
                     advertised_version = self._query_cvd_version_http(db)
+
+                if advertised_version == 0:
+                    self.logger.error(f"Failed to update {db}. Failed to query available CVD version")
+                    return False
 
                 return self._download_cvd(db, advertised_version)
 
@@ -817,7 +852,7 @@ class CVDUpdate:
                 self.logger.info(f"Deleted {db} from database directory.")
 
         except Exception as exc:
-            self.logger.debug(f"An exception occured:\n{exc}")
+            self.logger.debug(f"An exception occured: {exc}")
             self.logger.error(f"Failed to delete {db} from databse directory!")
 
         for cdiff in self.config['dbs'][db]['CDIFFs']:
@@ -827,7 +862,7 @@ class CVDUpdate:
                     self.logger.info(f"Deleted {cdiff} from database directory.")
 
             except Exception as exc:
-                self.logger.debug(f"An exception occured:\n{exc}")
+                self.logger.debug(f"An exception occured: {exc}")
                 self.logger.error(f"Failed to delete {cdiff} from databse directory!")
 
         self.config['dbs'].pop(db)
