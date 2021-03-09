@@ -90,6 +90,10 @@ Run `cvd update` as often as you need.  Maybe put it in a `cron` job.
 
 > _Tip_: Each command supports a `--verbose` (`-V`) mode, which often provides more details about what's going on under the hood.
 
+## Optional Functionality
+
+If a specific nameserver is required for `cvdupdate` to function properly (to gather the TXT record containing the current definition database version), please specify the IP address of the nameserver in the environment variable `CVDUPDATE_NAMESERVER` to ensure said nameserver is used when querying the TXT record containing the current database definition version available.
+
 ## Files and directories created by cvdupdate
 
 This tool is to creates the following directories:
