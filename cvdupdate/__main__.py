@@ -91,13 +91,14 @@ def db_show(config: str, verbose: bool, db: str):
 @cli.command("update")
 @click.option("--config", "-c", type=click.Path(), required=False, default="", help="Config path. [optional]")
 @click.option("--verbose", "-V", is_flag=True, default=False, help="Verbose output. [optional]")
+@click.option("--debug-mode", "-D", is_flag=True, default=False, help="Print out HTTP headers for debugging purposes. [optional]")
 @click.argument("db", required=False, default="")
-def db_update(config: str, verbose: bool, db: str):
+def db_update(config: str, verbose: bool, db: str, debug_mode: bool):
     """
     Update the DBs from the internet. Will update all DBs if DB not specified.
     """
     m = CVDUpdate(config=config, verbose=verbose)
-    errors = m.db_update(db)
+    errors = m.db_update(db, debug_mode)
     if errors > 0:
         sys.exit(errors)
 
@@ -247,8 +248,9 @@ def show_alias(ctx, config: str, verbose: bool, db: str):
 @click.pass_context
 @click.option("--config", "-c", type=click.Path(), required=False, default="", help="Config path. [optional]")
 @click.option("--verbose", "-V", is_flag=True, default=False, help="Verbose output. [optional]")
+@click.option("--debug-mode", "-D", is_flag=True, default=False, help="Print out HTTP headers for debugging purposes. [optional]")
 @click.argument("db", required=False, default="")
-def update_alias(ctx, config: str, verbose: bool, db: str):
+def update_alias(ctx, config: str, verbose: bool, db: str, debug_mode: bool):
     """
     Update local copy of DBs.
 
