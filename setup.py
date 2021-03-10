@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="cvdupdate",
-    version="0.2.0",
+    version="0.3.0",
     author="Micah Snyder",
     author_email="micasnyd@cisco.com",
     copyright="Copyright (C) 2021 Micah Snyder.",

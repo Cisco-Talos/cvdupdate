@@ -9,6 +9,27 @@ Changes in this document should be grouped per release using the following types
 - Fixed
 - Security
 
+## Version 0.3.0
+
+### Added
+
+- `cvd update` will now retry up to 3x if the downloaded content length is
+  less than the content-length in the response header. This is to resolve
+  issues with flakey connections.
+
+- `cvd update` now has a `--debug-mode` (`-D`) option to print out the HTTP
+  headers to debug issues with the update process.
+
+### Changed
+
+- CVDUpdate will now have a unique User-Agent: `CVDUPDATE/<version> (<UUID>)`
+
+  The UUID is randomly generated, and will help with anonymous usage metrics.
+
+### Fixed
+
+- Fixed a couple issues with the `cvd update <specific database>` option.
+
 ## Version 0.2.0
 
 ### Added
