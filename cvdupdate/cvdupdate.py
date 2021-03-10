@@ -39,6 +39,8 @@ class CVDUpdate:
 
     default_config: dict = {
         "nameserver" : "",
+        "max retry" : 3, # No `cvd config set` option to set this, because we don't
+                         # _really_ want people hammering the CDN with partial downloads.
 
         "log directory" : str(Path.home() / ".cvdupdate" / "logs"),
         "rotate logs" : True,
@@ -195,6 +197,9 @@ class CVDUpdate:
         # For backwards compatibility with older configs.
         if 'nameserver' not in self.config:
             self.config['nameserver'] = ""
+            need_save = True
+        if 'max retry' not in self.config:
+            self.config['max retry'] = 3
             need_save = True
 
         if need_save:
@@ -454,27 +459,38 @@ class CVDUpdate:
         Return 0  if failed.
         '''
         version = 0
+        retry = 0
         url = self.config['dbs'][db]['url']
-
-        if self.dns_version_tokens == []:
-            # Query DNS if we haven't already. We'll use the latest ClamAV version in the User-Agent.
-            self._query_dns_txt_entry()
-            if self.dns_version_tokens == []:
-                # Query failed. Bail out.
-                return version
 
         self.logger.debug(f"Checking {db} version via HTTP download of CVD header.")
 
         ims = datetime.datetime.utcfromtimestamp(self.config['dbs'][db]['last modified']).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-        response = requests.get(url, headers = {
-            'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
-            'Range': 'bytes=0-95',
-            'If-Modified-Since': ims,
-        })
+        while retry < self.config['max retry']:
+            response = requests.get(url, headers = {
+                'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                'Range': 'bytes=0-95',
+                'If-Modified-Since': ims,
+            })
+
+            if ((response.status_code == 200 or response.status_code == 206) and
+                ('content-length' in response.headers) and
+                (int(response.headers['content-length']) > len(response.content))):
+                self.logger.warning(f"Response was truncated somehow...")
+                self.logger.warning(f"   Expected {response.headers['content-length']}")
+                self.logger.warning(f"   Received {response.content}, let's retry.")
+                retry += 1
+            else:
+                break
 
         if response.status_code == 200 or response.status_code == 206:
-            # We downloaded content the header despite the IMS header, it *may* be newer.
+            # Looks like we downloaded something...
+            if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
+                self.logger.error(f"Failed to download {db} header to check the version #.")
+                return 0
+
+            # Successfully downloaded the header.
+            # We used the IMS header so this means it's probably newer, but we'll check just in case.
             cvd_header = response.content
             version = self._get_version_from_cvd_header(cvd_header)
             self.logger.debug(f"{db} version available by HTTP download: {version}")
@@ -515,14 +531,31 @@ class CVDUpdate:
         Will use If-Modified-Since
         If Not-Modified, it will not replace the current database.
         '''
+        retry = 0
         ims: str = datetime.datetime.utcfromtimestamp(last_modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-        response = requests.get(url, headers = {
-            'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
-            'If-Modified-Since': ims,
-        })
+        while retry < self.config['max retry']:
+            response = requests.get(url, headers = {
+                'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                'If-Modified-Since': ims,
+            })
+
+            if ((response.status_code == 200 or response.status_code == 206) and
+                ('content-length' in response.headers) and
+                (int(response.headers['content-length']) > len(response.content))):
+                self.logger.warning(f"Response was truncated somehow...")
+                self.logger.warning(f"   Expected {response.headers['content-length']}")
+                self.logger.warning(f"   Received {response.content}, let's retry.")
+                retry += 1
+            else:
+                break
 
         if response.status_code == 200:
+            # Looks like we downloaded something...
+            if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
+                self.logger.error(f"Failed to download {db}")
+                return 0
+
             # Download Success
             if version > 0:
                 self.logger.info(f"Downloaded {db}. Version: {version}")
@@ -599,6 +632,7 @@ class CVDUpdate:
             #   https://database.clamav.net/daily.cvd
             # For the daily cdiffs, we would want:
             #   https://database.clamav.net/daily-<version>.cdiff
+            retry = 0
             cdiff_filename = f"{db[:-len('.cvd')]}-{desired_version}.cdiff"
 
             original_url = self.config['dbs'][db]['url']
@@ -608,11 +642,28 @@ class CVDUpdate:
                 self.logger.debug(f"We already have {cdiff_filename}. Skipping...")
 
             self.logger.debug(f"Checking for {cdiff_filename}")
-            response = requests.get(url, headers = {
-                'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
-            })
+
+            while retry < self.config['max retry']:
+                response = requests.get(url, headers = {
+                    'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                })
+
+                if ((response.status_code == 200 or response.status_code == 206) and
+                    ('content-length' in response.headers) and
+                    (int(response.headers['content-length']) > len(response.content))):
+                    self.logger.warning(f"Response was truncated somehow...")
+                    self.logger.warning(f"   Expected {response.headers['content-length']}")
+                    self.logger.warning(f"   Received {response.content}, let's retry.")
+                    retry += 1
+                else:
+                    break
 
             if response.status_code == 200:
+                # Looks like we downloaded something...
+                if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
+                    self.logger.error(f"Failed to download {db} header to check the version #.")
+                    return 0
+
                 # Download Success
                 self.logger.info(f"Downloaded {cdiff_filename}")
                 try:
@@ -717,8 +768,16 @@ class CVDUpdate:
         self.update_errors = 0
         self.dns_version_tokens = []
 
+        # Make sure we have a database directory to save files to
         if not self.db_dir.exists():
             os.makedirs(self.db_dir)
+
+        # Query DNS so we can efficiently query CVD version #'s
+        self._query_dns_txt_entry()
+        if self.dns_version_tokens == []:
+            # Query failed. Bail out.
+            self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
+            return 1
 
         def update(db) -> bool:
             '''
@@ -831,7 +890,7 @@ class CVDUpdate:
         }
 
         self.logger.info(f"Added {db} ({url}) to DB list.")
-        self.logger.info(f"{db} will be downloaded next time you run `db update` or `db update {db}`")
+        self.logger.info(f"{db} will be downloaded next time you run `cvd update` or `cvd update {db}`")
 
         self._save_config()
 
