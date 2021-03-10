@@ -20,6 +20,7 @@ limitations under the License.
 from pathlib import Path
 import copy
 import datetime
+from enum import Enum
 import json
 import logging
 import os
@@ -32,6 +33,10 @@ from dns import resolver
 import requests
 from requests import status_codes
 
+class CvdStatus(Enum):
+    NO_UPDATE = 0
+    UPDATED = 1
+    ERROR = 2
 
 class CVDUpdate:
 
@@ -525,7 +530,7 @@ class CVDUpdate:
 
         return version
 
-    def _download_db_from_url(self, db: str, url: str, last_modified: int, version=0) -> bool:
+    def _download_db_from_url(self, db: str, url: str, last_modified: int, version=0) -> CvdStatus:
         '''
         Download contents from a url and save to a filename in the database directory.
         Will use If-Modified-Since
@@ -554,7 +559,7 @@ class CVDUpdate:
             # Looks like we downloaded something...
             if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
                 self.logger.error(f"Failed to download {db}")
-                return 0
+                return CvdStatus.ERROR
 
             # Download Success
             if version > 0:
@@ -574,12 +579,13 @@ class CVDUpdate:
             except Exception as exc:
                 self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                 self.logger.error(f"Failed to save {db} to {self.db_dir}")
-                return False
+                return CvdStatus.ERROR
 
         elif response.status_code == 304:
             # Not modified since IMS. We have the latest version.
             version = self.config['dbs'][db]['local version']
             self.logger.info(f"{db} not-modified since: {ims} (local version {version})")
+            return CvdStatus.NO_UPDATE
 
         elif response.status_code == 429:
             # Rejected because downloading the same file too frequently.
@@ -596,16 +602,16 @@ class CVDUpdate:
             self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
 
             # We'll have to retry after the cooldown.
-            return False
+            return CvdStatus.ERROR
 
         else:
             # HTTP Get failed.
             self.logger.error(f"Failed to download {db} from {url}")
-            return False
+            return CvdStatus.ERROR
 
-        return True
+        return CvdStatus.UPDATED
 
-    def _download_cvd(self, db: str, available_version: int) -> bool:
+    def _download_cvd(self, db: str, available_version: int) -> CvdStatus:
         '''
         Download the latest available version
         If we already have some version of the database, attempt to download all CDIFFs in between.
@@ -617,7 +623,7 @@ class CVDUpdate:
         if local_version >= available_version:
             # Oh! We're already up to date, don't worry about it.
             self.logger.info(f"{db} is up-to-date. Version: {local_version}")
-            return True
+            return CvdStatus.NO_UPDATE
 
         elif local_version == 0:
             # We don't have any version of the DB, let's just get the newest version + the last CDIFF
@@ -662,7 +668,7 @@ class CVDUpdate:
                 # Looks like we downloaded something...
                 if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
                     self.logger.error(f"Failed to download {db} header to check the version #.")
-                    return 0
+                    return CvdStatus.ERROR
 
                 # Download Success
                 self.logger.info(f"Downloaded {cdiff_filename}")
@@ -698,7 +704,7 @@ class CVDUpdate:
 
                 # Sure only a CDIFF failed, but if we want any chance of trying the CDIFF again
                 # in the future, let's bail out now and retry the CVD + CDIFFs after the cooldown.
-                return False
+                return CvdStatus.ERROR
 
             else:
                 # HTTP Get failed.
@@ -764,8 +770,11 @@ class CVDUpdate:
     def db_update(self, db="") -> int:
         """
         Update one or all of the databases.
+
+        Returns: Number of errors.
         """
         self.update_errors = 0
+        self.dbs_updated = 0
         self.dns_version_tokens = []
 
         # Make sure we have a database directory to save files to
@@ -779,7 +788,7 @@ class CVDUpdate:
             self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
             return 1
 
-        def update(db) -> bool:
+        def update(db) -> CvdStatus:
             '''
             Update a database
             '''
@@ -788,7 +797,7 @@ class CVDUpdate:
 
                 if self.config['dbs'][db]['retry after'] > time.time():
                     self.logger.warning(f"Skipping {db} which is on cooldown until {cooldown_date}")
-                    return False
+                    return CvdStatus.ERROR
                 else:
                     # Cooldown expired. Ok to try again.
                     self.config['dbs'][db]['retry after'] = 0
@@ -796,7 +805,7 @@ class CVDUpdate:
 
             if not self.config['dbs'][db]['url'].startswith('http'):
                 self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
-                return False
+                return CvdStatus.ERROR
 
             self.logger.debug(f"Checking {db} for update from {self.config['dbs'][db]['url']}")
 
@@ -821,7 +830,7 @@ class CVDUpdate:
 
                 if advertised_version == 0:
                     self.logger.error(f"Failed to update {db}. Failed to query available CVD version")
-                    return False
+                    return CvdStatus.ERROR
 
                 return self._download_cvd(db, advertised_version)
 
@@ -837,18 +846,29 @@ class CVDUpdate:
         if db == "":
             # Update every DB.
             for db in self.config['dbs']:
-                if update(db) == False:
+                status = update(db)
+                if status == CvdStatus.ERROR:
                     self.update_errors += 1
+                elif status == CvdStatus.UPDATED:
+                    self.dbs_updated += 1
 
         else:
             # Update a specific DB.
             if db not in self.config['dbs']:
                 self.logger.error(f"Update failed. Unknown database: {db}")
             else:
-                if update(db) == False:
-                    self.update_errors = 1
+                status = update(db)
+                if status == CvdStatus.ERROR:
+                    self.update_errors += 1
+                elif status == CvdStatus.UPDATED:
+                    self.dbs_updated += 1
 
         self._save_config()
+
+        if self.update_errors == 0 and self.dbs_updated > 0:
+            with (self.db_dir / 'dns.txt').open('w') as dns_file:
+                dns_file.write(':'.join(self.dns_version_tokens))
+            self.logger.debug(f"Updated {self.db_dir / 'dns.txt'}")
 
         return self.update_errors
 
