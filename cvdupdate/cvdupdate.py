@@ -28,6 +28,8 @@ import pkg_resources
 import re
 import time
 from typing import *
+import uuid
+import http.client as http_client
 
 from dns import resolver
 import requests
@@ -183,6 +185,11 @@ class CVDUpdate:
         else:
             # Config does not exist, use default
             self.config = self.default_config
+            need_save = True
+
+        if 'uuid' not in self.config:
+            # Create a UUID to put in our User-Agent for better (anonymous) metrics
+            self.config['uuid'] = str(uuid.uuid4())
             need_save = True
 
         if db_dir != "":
@@ -473,7 +480,7 @@ class CVDUpdate:
 
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
-                'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
                 'Range': 'bytes=0-95',
                 'If-Modified-Since': ims,
             })
@@ -541,7 +548,7 @@ class CVDUpdate:
 
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
-                'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
                 'If-Modified-Since': ims,
             })
 
@@ -651,7 +658,7 @@ class CVDUpdate:
 
             while retry < self.config['max retry']:
                 response = requests.get(url, headers = {
-                    'User-Agent': f'ClamAV/{self.dns_version_tokens[0]} (cvdupdate-{self.version})',
+                    'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
                 })
 
                 if ((response.status_code == 200 or response.status_code == 206) and
@@ -767,7 +774,7 @@ class CVDUpdate:
 
         return version_found
 
-    def db_update(self, db="") -> int:
+    def db_update(self, db="", debug_mode=False) -> int:
         """
         Update one or all of the databases.
 
@@ -787,6 +794,9 @@ class CVDUpdate:
             # Query failed. Bail out.
             self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
             return 1
+
+        if debug_mode:
+            http_client.HTTPConnection.debuglevel = 1
 
         def update(db) -> CvdStatus:
             '''
