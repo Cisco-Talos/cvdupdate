@@ -7,7 +7,7 @@ for the purposes of hosting your own database mirror.
   <img src="https://badge.fury.io/py/cvdupdate.svg" alt="PyPI version" height="18">
 </a>
 <img alt="PyPI - Python Version" src="https://img.shields.io/pypi/pyversions/cvdupdate" height="18">
-<a href="https://discord.gg/sGaxA5Q"><img src="https://img.shields.io/discord/636023333074370595.svg?logo=discord" height="18"/></a>
+<a href="https://discord.gg/6vNAqWnVgw"><img src="https://img.shields.io/discord/636023333074370595.svg?logo=discord" height="18"/></a>
 <a href="https://twitter.com/clamav"><img src="https://abs.twimg.com/favicons/twitter.ico" width="18" height="18"></a>
 </p>
 
