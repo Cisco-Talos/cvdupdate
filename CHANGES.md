@@ -20,6 +20,13 @@ Changes in this document should be grouped per release using the following types
 - `cvd update` now has a `--debug-mode` (`-D`) option to print out the HTTP
   headers to debug issues with the update process.
 
+- The update process will now save the DNS TXT record containing version
+  metadata as `dns.txt` in the database directory so it may be served by the
+  private mirror.
+
+  Some common check scripts (on clients) use `dns.txt` to check if ClamAV is up
+  to date instead of using DNS or the HTTP CVD-header check.
+
 ### Changed
 
 - CVDUpdate will now have a unique User-Agent: `CVDUPDATE/<version> (<UUID>)`
