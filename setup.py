@@ -25,7 +25,7 @@ setuptools.setup(
         "coloredlogs>=10.0",
         "colorama",
         "requests",
-        "dnspython",
+        "dnspython>=2.1.0",
         "rangehttpserver",
     ],
     classifiers=[
