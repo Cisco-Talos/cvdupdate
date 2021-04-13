@@ -10,7 +10,7 @@ for the purposes of hosting your own database mirror.
 """
 
 _copyright = """
-Copyright (C) 2021 Micah Snyder.
+Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
 """
 
 """

@@ -8,7 +8,7 @@ setuptools.setup(
     version="0.3.0",
     author="Micah Snyder",
     author_email="micasnyd@cisco.com",
-    copyright="Copyright (C) 2021 Micah Snyder.",
+    copyright="Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.",
     description="ClamAV Private Database Mirror Updater Tool",
     long_description=long_description,
     long_description_content_type="text/markdown",
