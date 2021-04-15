@@ -407,6 +407,7 @@ class CVDUpdate:
 
         try:
             our_resolver = resolver.Resolver()
+            our_resolver.timeout = 5 # Explicitly setting query timeout to mitigate https://github.com/Cisco-Talos/cvdupdate/issues/17
             nameserver = os.environ.get("CVDUPDATE_NAMESERVER")
 
             if nameserver != None:
