@@ -26,6 +26,8 @@ import logging
 import os
 import pkg_resources
 import re
+import subprocess
+import sys
 import time
 from typing import *
 import uuid
@@ -775,6 +777,33 @@ class CVDUpdate:
 
         return version_found
 
+    def pypi_update_check(self):
+        def check(name):
+            '''
+            Check if there's a newer version of the cvdupdate package.
+            From https://stackoverflow.com/questions/58648739/how-to-check-if-python-package-is-latest-version-programmatically
+            '''
+            self.logger.debug(f'Checking for a newer version of cvdupdate.')
+
+            latest_version = str(subprocess.run([sys.executable, '-m', 'pip', 'install', '{}==random'.format('cvdupdate')], capture_output=True, text=True))
+            latest_version = latest_version[latest_version.find('(from versions:')+15:]
+            latest_version = latest_version[:latest_version.find(')')]
+            latest_version = latest_version.replace(' ','').split(',')[-1]
+
+            current_version = str(subprocess.run([sys.executable, '-m', 'pip', 'show', '{}'.format('cvdupdate')], capture_output=True, text=True))
+            current_version = current_version[current_version.find('Version:')+8:]
+            current_version = current_version[:current_version.find('\\n')].replace(' ','')
+
+            if latest_version == current_version:
+                self.logger.debug(f'cvdupdate is up-to-date: {current_version}.')
+                return True
+            else:
+                self.logger.warning(f'You are running cvdupate version: {current_version}.')
+                self.logger.warning(f'There is a newer version on PyPI: {latest_version}. Please update!')
+                return False
+
+        return check('cvdupdate')
+
     def db_update(self, db="", debug_mode=False) -> int:
         """
         Update one or all of the databases.
@@ -788,6 +817,9 @@ class CVDUpdate:
         # Make sure we have a database directory to save files to
         if not self.db_dir.exists():
             os.makedirs(self.db_dir)
+
+        # Check if there is a newer version of CVD-Update
+        self.pypi_update_check()
 
         # Query DNS so we can efficiently query CVD version #'s
         self._query_dns_txt_entry()
