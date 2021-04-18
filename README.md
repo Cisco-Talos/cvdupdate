@@ -42,7 +42,7 @@ Use the `--help` option with any `cvd` command to get help.
 cvd --help
 ```
 
-> _Tip_: You may not be able to run the `cvd` or `cvdupdate` shortcut directly if your Python Scripts directory is not in your `PATH` environment variable. If you run into this issue, and do not wish to add the Python Scripts directory to your path, you can run `cvdupdate` like this:
+> _Tip_: You may not be able to run the `cvd` or `cvdupdate` shortcut directly if your Python Scripts directory is not in your `PATH` environment variable. If you run into this issue, and do not wish to add the Python Scripts directory to your path, you can run CVD-Update like this:
 >
 > ```bash
 > python -m cvdupdate --help
@@ -62,7 +62,7 @@ cvd update
 
 Downloaded databases will be placed in `~/.cvdupdate/database` unless you customized it to use a different directory.
 
-Newly downloaded databases will replace the previous database version, but the CDIFF patch files will accumulate up to a configured maximum before it starts deleting old CDIFFs (default: 30 CDIFFs). You can configure it to keep more CDIFFs by manually editing the config (default: `~/.cvdupdate/config.json`). The same behavior applies for cvdupdate log rotation.
+Newly downloaded databases will replace the previous database version, but the CDIFF patch files will accumulate up to a configured maximum before it starts deleting old CDIFFs (default: 30 CDIFFs). You can configure it to keep more CDIFFs by manually editing the config (default: `~/.cvdupdate/config.json`). The same behavior applies for CVD-Update log rotation.
 
 Run this to serve up the database directory on `http://localhost:8000` so you can test it with FreshClam.
 
@@ -90,9 +90,41 @@ Run `cvd update` as often as you need.  Maybe put it in a `cron` job.
 
 > _Tip_: Each command supports a `--verbose` (`-V`) mode, which often provides more details about what's going on under the hood.
 
+### Cron Example
+
+Cron is a popular choice to automate frequent tasks on Linux / Unix systems.
+
+1. Open a terminal running as the user which you want CVD-Update to run under, do the following:
+
+   ```bash
+   crontab -e
+   ```
+
+2. Press `i` to insert new text, and add this line:
+
+   ```bash
+   30 */4 * * * /bin/sh -c "~/.local/bin/cvd update &> /dev/null"
+   ```
+
+   Or instead of `~/`, you can do this, replacing `username` with your user name:
+
+   ```bash
+   30 */4 * * * /bin/sh -c "/home/username/.local/bin/cvd update &> /dev/null"
+   ```
+
+3. Press <Escape>, then type `:wq` and press <Enter> to write the file to disk and quit.
+
+**About these settings**:
+
+I selected `30 */4 * * *` to run at minute 30 past every 4th hour. CVD-Update uses a DNS check to do version checks before it attempts to download any files, just like FreshClam. Running CVD-Update more than once a day should not be an issue.
+
+CVD-Update will write logs to the `~/.cvdupdate/logs` directory, which is why I directed `stdout` and `stderr` to `/dev/null` instead of a log file. You can use the `cvd config set` command to customize the log directory if you like, or redirect `stdout` and `stderr` to a log file if you prefer everything in one log instead of separate daily logs.
+
 ## Optional Functionality
 
-DNS is required for `cvdupdate` to function properly (to gather the TXT record containing the current definition database version). You can select a specific nameserver to ensure said nameserver is used when querying the TXT record containing the current database definition version available
+### Using a custom DNS server
+
+DNS is required for CVD-Update to function properly (to gather the TXT record containing the current definition database version). You can select a specific nameserver to ensure said nameserver is used when querying the TXT record containing the current database definition version available
 
 1. Set the nameserver in the config. Eg:
 
@@ -108,7 +140,38 @@ DNS is required for `cvdupdate` to function properly (to gather the TXT record c
 
 The environment variable will take precedence over the nameserver config setting.
 
-## Files and directories created by cvdupdate
+### Using a proxy
+
+Depending on your type of proxy, you may be able to use CVD-Update with your proxy by running CVD-Update like this:
+
+First, set a custom domain name server to use the proxy:
+
+```bash
+cvd config set --nameserver <proxy_ip>
+```
+
+Then run CVD-Update like this:
+
+```bash
+http_proxy=http://<proxy_ip>:<proxy_port> https_proxy=http://<proxy_ip>:<proxy_port> cvd update -V
+```
+
+Or create a script to wrap the CVD-Update call. Something like:
+
+```bash
+#!/bin/bash
+http_proxy=http://<proxy_ip>:<proxy_port>
+export http_proxy
+https_proxy=http://<proxy_ip>:<proxy_port>
+export https_proxy
+cvd update -V
+```
+
+> _Disclaimer_: CVD-Update doesn't support proxies that require authentication at this time. If your network admin allows it, you may be able to work around it by updating your proxy to allow HTTP requests through unauthenticated if the User-Agent matches your specific CVD-Update user agent. The CVD-Update User-Agent follows the form `CVDUPDATE/<version> (<uuid>)` where the `uuid` is unique to your installation and can be found in the `~/.cvdupdate/config.json` file. See https://github.com/Cisco-Talos/cvdupdate/issues/9 for more details.
+>
+> Adding support for proxy authentication is a ripe opportunity for a community contribution to the project.
+
+## Files and directories created by CVD-Update
 
 This tool is to creates the following directories:
  - `~/.cvdupdate`
@@ -206,21 +269,21 @@ Join the ClamAV community on the [ClamAV Discord chat server](https://discord.gg
 
 ### Report issues
 
-If you find an issue with cvdupdate or the cvdupdate documentation, please submit an issue to our [GitHub issue tracker](https://github.com/micahsnyder/cvdupdate/issues).  Before you submit, please check to if someone else has already reported the issue.
+If you find an issue with CVD-Update or the CVD-Update documentation, please submit an issue to our [GitHub issue tracker](https://github.com/Cisco-Talos/cvdupdate/issues).  Before you submit, please check to if someone else has already reported the issue.
 
 ### Development
 
-If you find a bug and you're able to craft a fix yourself, consider submitting the fix in a [pull request](https://github.com/micahsnyder/cvdupdate/pulls). Your help will be greatly appreciated.
+If you find a bug and you're able to craft a fix yourself, consider submitting the fix in a [pull request](https://github.com/Cisco-Talos/cvdupdate/pulls). Your help will be greatly appreciated.
 
-If you want to contribute to the project and don't have anything specific in mind, please check out our [issue tracker](https://github.com/micahsnyder/cvdupdate/issues).  Perhaps you'll be able to fix a bug or add a cool new feature.
+If you want to contribute to the project and don't have anything specific in mind, please check out our [issue tracker](https://github.com/Cisco-Talos/cvdupdate/issues).  Perhaps you'll be able to fix a bug or add a cool new feature.
 
 _By submitting a contribution to the project, you acknowledge and agree to assign Cisco Systems, Inc the copyright for the contribution. If you submit a significant contribution such as a new feature or capability or a large amount of code, you may be asked to sign a contributors license agreement comfirming that Cisco will have copyright license and patent license and that you are authorized to contribute the code._
 
 #### Development Set-up
 
-The following steps are intended to help users that wish to contribute to development of the cvdupdate project get started.
+The following steps are intended to help users that wish to contribute to development of the CVD-Update project get started.
 
-1. Create a fork of the [cvdupdate git repository](https://github.com/micahsnyder/cvdupdate), and then clone your fork to a local directory.
+1. Create a fork of the [CVD-Update git repository](https://github.com/Cisco-Talos/cvdupdate), and then clone your fork to a local directory.
 
     For example:
 
@@ -228,19 +291,19 @@ The following steps are intended to help users that wish to contribute to develo
     git clone https://github.com/<your username>/cvdupdate.git
     ```
 
-2. Make sure cvdupdate is not already installed.  If it is, remove it.
+2. Make sure CVD-Update is not already installed.  If it is, remove it.
 
     ```bash
     python3 -m pip uninstall cvdupdate
     ```
 
-3. Use pip to install cvdupdate in "edit" mode.
+3. Use pip to install CVD-Update in "edit" mode.
 
     ```bash
     python3 -m pip install -e --user ./cvdupdate
     ```
 
-Once installed in "edit" mode, any changes you make to your clone of the cvdupdate code will be immediately usable simply by running the `cvdupdate` / `cvd` commands.
+Once installed in "edit" mode, any changes you make to your clone of the CVD-Update code will be immediately usable simply by running the `cvdupdate` / `cvd` commands.
 
 ### Conduct
 
@@ -248,7 +311,7 @@ This project has not selected a specific Code-of-Conduct document at this time. 
 
 ## License
 
-cvdupdate is licensed under the Apache License, Version 2.0 (the "License"). You may not use the cvdupdate project except in compliance with the License.
+CVD-Update is licensed under the Apache License, Version 2.0 (the "License"). You may not use the CVD-Update project except in compliance with the License.
 
 A copy of the license is located [here](LICENSE), and is also available online at [apache.org](http://www.apache.org/licenses/LICENSE-2.0).
 
