@@ -873,6 +873,16 @@ class CVDUpdate:
                 else:
                     # We can't use DNS to see if our version is old.
                     # Use HTTP to pull just the CVD header to check.
+
+                    # First, make sure no one tampered with the DNS field for
+                    # main/daily/bytecode when using database.clamav.net
+                    if (('database.clamav.net' in self.config['dbs'][db]['url']) and
+                        (db == 'main.cvd' or db == 'daily.cvd' or db == 'bytecode.cvd')):
+                        self.logger.error(f'It appears that the "DNS field" in {self.config_path} for "{db}" was modified from the default.')
+                        self.logger.error(f'Updating {db} from database.clamav.net requires DNS for the version check in order to conserve bandwidth.')
+                        self.logger.error(f'Please restore the default settings for the "DNS field" and try again.')
+                        return CvdStatus.ERROR
+
                     advertised_version = self._query_cvd_version_http(db)
 
                 if advertised_version == 0:
