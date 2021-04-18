@@ -685,18 +685,22 @@ class CVDUpdate:
                 try:
                     with (self.db_dir / f"{cdiff_filename}").open('wb') as new_db:
                         new_db.write(response.content)
-
-                    # Update config with CDIFF, for posterity
-                    self.config['dbs'][db]['CDIFFs'].append(cdiff_filename)
-
-                    # Prune old CDIFFs if needed
-                    if len(self.config['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
-                        os.remove(self.db_dir / self.config['dbs'][db]['CDIFFs'][0])
-                        self.config['dbs'][db]['CDIFFs'] = self.config['dbs'][db]['CDIFFs'][1:]
-
                 except Exception as exc:
                     self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                     self.logger.error(f"Failed to save {cdiff_filename} to {self.db_dir}.")
+
+                # Update config with CDIFF, for posterity
+                self.config['dbs'][db]['CDIFFs'].append(cdiff_filename)
+
+                # Prune old CDIFFs if needed
+                if len(self.config['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
+                    try:
+                        os.remove(self.db_dir / self.config['dbs'][db]['CDIFFs'][0])
+                    except Exception as exc:
+                        self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+                        self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
+
+                    self.config['dbs'][db]['CDIFFs'] = self.config['dbs'][db]['CDIFFs'][1:]
 
             elif response.status_code == 429:
                 # Rejected because downloading the same file too frequently.
