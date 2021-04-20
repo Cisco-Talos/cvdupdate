@@ -789,14 +789,16 @@ class CVDUpdate:
             '''
             self.logger.debug(f'Checking for a newer version of cvdupdate.')
 
-            latest_version = str(subprocess.run([sys.executable, '-m', 'pip', 'install', '{}==random'.format('cvdupdate')], capture_output=True, text=True))
+            result = subprocess.run([sys.executable, '-m', 'pip', 'install', '{}==random'.format('cvdupdate')], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            latest_version = result.stderr.decode("utf-8")
             latest_version = latest_version[latest_version.find('(from versions:')+15:]
             latest_version = latest_version[:latest_version.find(')')]
-            latest_version = latest_version.replace(' ','').split(',')[-1]
+            latest_version = latest_version.replace(' ','').split(',')[-1].strip()
 
-            current_version = str(subprocess.run([sys.executable, '-m', 'pip', 'show', '{}'.format('cvdupdate')], capture_output=True, text=True))
+            result = subprocess.run([sys.executable, '-m', 'pip', 'show', '{}'.format('cvdupdate')], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            current_version = result.stdout.decode("utf-8")
             current_version = current_version[current_version.find('Version:')+8:]
-            current_version = current_version[:current_version.find('\\n')].replace(' ','')
+            current_version = current_version[:current_version.find('\n')].replace(' ','').strip()
 
             if 'ERROR' in latest_version:
                 self.logger.debug(f"Version check didn't work, didn't get back a list of package versions.")
