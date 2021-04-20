@@ -798,7 +798,10 @@ class CVDUpdate:
             current_version = current_version[current_version.find('Version:')+8:]
             current_version = current_version[:current_version.find('\\n')].replace(' ','')
 
-            if latest_version == current_version:
+            if 'ERROR' in latest_version:
+                self.logger.debug(f"Version check didn't work, didn't get back a list of package versions.")
+                return True
+            elif latest_version == current_version:
                 self.logger.debug(f'cvdupdate is up-to-date: {current_version}.')
                 return True
             else:
