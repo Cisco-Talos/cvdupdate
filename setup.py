@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="cvdupdate",
-    version="1.0.1",
+    version="1.0.2",
     author="The ClamAV Team",
     author_email="clamav-bugs@external.cisco.com",
     copyright="Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.",

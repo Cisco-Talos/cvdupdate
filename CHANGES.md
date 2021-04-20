@@ -8,6 +8,10 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.0.2
+
+🐛 Fixed a Python 3.6 compatibility issue in the package version check.
+
 ## Version 1.0.1
 
 🐛 Fixed a bug where the CVD-Update PyPI package version check prints an
