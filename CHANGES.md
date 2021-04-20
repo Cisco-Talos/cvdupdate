@@ -8,6 +8,12 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.0.1
+
+🐛 Fixed a bug where the CVD-Update PyPI package version check prints an
+  error message on some systems where `pip` doesn't return the available
+  package versions.
+
 ## Version 1.0.0
 
 ➕ Added a check to make sure that version check for the daily, main, and
