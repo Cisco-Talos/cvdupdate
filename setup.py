@@ -6,13 +6,13 @@ with open("README.md", "r") as fh:
 setuptools.setup(
     name="cvdupdate",
     version="1.0.0",
-    author="Micah Snyder",
-    author_email="micasnyd@cisco.com",
+    author="The ClamAV Team",
+    author_email="clamav-bugs@external.cisco.com",
     copyright="Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.",
     description="ClamAV Private Database Mirror Updater Tool",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/micahsnyder/cvdupdate",
+    url="https://github.com/Cisco-Talos/cvdupdate",
     packages=setuptools.find_packages(),
     entry_points={
         "console_scripts": [
