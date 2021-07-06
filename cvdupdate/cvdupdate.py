@@ -45,6 +45,7 @@ class CvdStatus(Enum):
 class CVDUpdate:
 
     default_config_path: Path = Path.home() / ".cvdupdate" / "config.json"
+    default_state_path: Path = Path.home() / ".cvdupdate" / "state.json"
 
     default_config: dict = {
         "nameserver" : "",
@@ -58,7 +59,10 @@ class CVDUpdate:
         "db directory" : str(Path.home() / ".cvdupdate" / "database"),
         "rotate cdiffs" : True,
         "# cdiffs to keep" : 30,
+        "state file": str(default_state_path),
+    }
 
+    default_state: dict = {
         "dbs" : {
             "main.cvd" : {
                 "url" : "https://database.clamav.net/main.cvd",
@@ -92,6 +96,7 @@ class CVDUpdate:
 
     config_path: Path
     config: dict
+    state: dict
     db_dir: Path
     log_dir: Path
     version: str
@@ -216,6 +221,27 @@ class CVDUpdate:
             self.config['max retry'] = 3
             need_save = True
 
+        # keep database state in a separate file
+        if 'state file' not in self.config:
+            self.config['state file'] = self.default_state_path
+            need_save = True
+            # handle migration of 'dbs' from config.json to state.json
+            if 'dbs' in self.config:
+                self.state = self.config['dbs']
+                del self.config['dbs']
+
+        state_file = Path(self.config['state file'])
+        if state_file.exists():
+            # state file exists, load it.
+            with state_file.open('r') as st_fi:
+                self.state = json.load(st_fi)
+        elif not hasattr(self, 'state') or 'dbs' not in self.state:
+            # state file does not exist
+            # so we either have a fresh install or we have a messed up json
+            # create a skeleton structure
+            self.state = self.default_state
+            need_save = True
+
         if need_save:
             self._save_config()
 
@@ -238,8 +264,16 @@ class CVDUpdate:
             print("Failed to create config file!")
             raise exc
 
+        try:
+            with open(self.config['state file'], 'w') as state_file:
+                json.dump(self.state, state_file, indent=4)
+        except Exception as exc:
+            print("Failed to create state file!")
+            raise exc
+
         if self.verbose:
             print(f"Saved: {self.config_path}\n")
+            print(f"Saved: {self.config['state file']}\n")
 
     def config_show(self):
         """
@@ -247,6 +281,8 @@ class CVDUpdate:
         """
         print(f"Config file: {self.config_path}\n")
         print(f"Config:\n{json.dumps(self.config, indent=4)}\n")
+        print(f"State file: {self.config['state file']}\n")
+        print(f"State:\n{json.dumps(self.state, indent=4)}\n")
 
     def update(self, db: str = "") -> bool:
         """
@@ -283,10 +319,12 @@ class CVDUpdate:
 
         os.remove(str(self.config_path))
         print(f"Deleted: {self.config_path}")
+        os.remove(str(self.config['state file']))
+        print(f"Deleted: {self.config['state file']}")
 
     def _index_local_databases(self) -> dict:
         need_save = False
-        dbs = copy.deepcopy(self.config['dbs'])
+        dbs = copy.deepcopy(self.state['dbs'])
 
         db_paths = self.db_dir.glob('*')
         for db in db_paths:
@@ -319,7 +357,7 @@ class CVDUpdate:
                 }
             else:
                 # DB on disk is from our config
-                if db.name.endswith(".cvd") and self.config['dbs'][db.name]['local version'] == 0:
+                if db.name.endswith(".cvd") and self.state['dbs'][db.name]['local version'] == 0:
                     # Seems like we somehow got a (config'd) CVD file in our database directory without
                     # saving the CVD info to the config. Let's just update the version field.
                     self.logger.info(f"Found {db.name} in the DB directory, though it wasn't downloaded using this tool.")
@@ -328,7 +366,7 @@ class CVDUpdate:
                         self.logger.info(f"Identified mysterious {db.name} version: {dbs[db.name]['local version']}")
 
                         # Add the version info for this mysteriously deposited CVD to our config.
-                        self.config['dbs'][db.name]['local version'] = dbs[db.name]['local version']
+                        self.state['dbs'][db.name]['local version'] = dbs[db.name]['local version']
                         need_save = True
                     except Exception as exc:
                         self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
@@ -477,17 +515,17 @@ class CVDUpdate:
 
         self.logger.debug(f"Checking {db} version via DNS TXT advertisement.")
 
-        if self.config['dbs'][db]['DNS field'] == 0:
+        if self.state['dbs'][db]['DNS field'] == 0:
             # Invalid DNS field value for database version.
             self.logger.warning(f"Failed to get DB version from DNS TXT entry: Invalid DNS field value for database version.")
             return version
 
         try:
-            version = int(self.dns_version_tokens[self.config['dbs'][db]['DNS field']])
+            version = int(self.dns_version_tokens[self.state['dbs'][db]['DNS field']])
             self.logger.debug(f"{db} version advertised by DNS: {version}")
 
             # Update the "last checked" time.
-            self.config['dbs'][db]['last checked'] = time.time()
+            self.state['dbs'][db]['last checked'] = time.time()
 
         except Exception as exc:
             self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
@@ -504,11 +542,11 @@ class CVDUpdate:
         '''
         version = 0
         retry = 0
-        url = self.config['dbs'][db]['url']
+        url = self.state['dbs'][db]['url']
 
         self.logger.debug(f"Checking {db} version via HTTP download of CVD header.")
 
-        ims = datetime.datetime.utcfromtimestamp(self.config['dbs'][db]['last modified']).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        ims = datetime.datetime.utcfromtimestamp(self.state['dbs'][db]['last modified']).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
@@ -542,7 +580,7 @@ class CVDUpdate:
         elif response.status_code == 304:
             # HTTP Not-Modified, it's not newer.than what we already have.
             # Just return the current local version.
-            version = self.config['dbs'][db]['local version']
+            version = self.state['dbs'][db]['local version']
             self.logger.debug(f"{db} not-modified since: {ims} (local version {version})")
 
         elif response.status_code == 429:
@@ -554,7 +592,7 @@ class CVDUpdate:
             if 'Retry-After' in response.headers.keys():
                 try_again_seconds = int(response.headers['Retry-After'])
 
-            self.config['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
+            self.state['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
 
             try_again_string = str(datetime.timedelta(seconds=try_again_seconds))
             self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
@@ -565,7 +603,7 @@ class CVDUpdate:
 
         if version > 0:
             # Update the "last checked" time.
-            self.config['dbs'][db]['last checked'] = time.time()
+            self.state['dbs'][db]['last checked'] = time.time()
 
         return version
 
@@ -611,9 +649,9 @@ class CVDUpdate:
                     new_db.write(response.content)
 
                 # Update config w/ new db info
-                self.config['dbs'][db]['last modified'] = time.time()
+                self.state['dbs'][db]['last modified'] = time.time()
                 if db.endswith('.cvd'):
-                    self.config['dbs'][db]['local version'] = self._get_version_from_cvd_header(response.content[:96])
+                    self.state['dbs'][db]['local version'] = self._get_version_from_cvd_header(response.content[:96])
 
             except Exception as exc:
                 self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
@@ -622,7 +660,7 @@ class CVDUpdate:
 
         elif response.status_code == 304:
             # Not modified since IMS. We have the latest version.
-            version = self.config['dbs'][db]['local version']
+            version = self.state['dbs'][db]['local version']
             self.logger.info(f"{db} not-modified since: {ims} (local version {version})")
             return CvdStatus.NO_UPDATE
 
@@ -635,7 +673,7 @@ class CVDUpdate:
             if 'Retry-After' in response.headers.keys():
                 try_again_seconds = int(response.headers['Retry-After'])
 
-            self.config['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
+            self.state['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
 
             try_again_string = str(datetime.timedelta(seconds=try_again_seconds))
             self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
@@ -656,7 +694,7 @@ class CVDUpdate:
         If we already have some version of the database, attempt to download all CDIFFs in between.
         If we don't, just get the last two CDIFFs.
         '''
-        local_version = self.config['dbs'][db]['local version']
+        local_version = self.state['dbs'][db]['local version']
         desired_version = local_version + 1
 
         if local_version >= available_version:
@@ -680,7 +718,7 @@ class CVDUpdate:
             retry = 0
             cdiff_filename = f"{db[:-len('.cvd')]}-{desired_version}.cdiff"
 
-            original_url = self.config['dbs'][db]['url']
+            original_url = self.state['dbs'][db]['url']
             url = f"{original_url[:-len(db)]}{cdiff_filename}"
 
             if (self.db_dir / cdiff_filename).exists():
@@ -719,17 +757,17 @@ class CVDUpdate:
                     self.logger.error(f"Failed to save {cdiff_filename} to {self.db_dir}.")
 
                 # Update config with CDIFF, for posterity
-                self.config['dbs'][db]['CDIFFs'].append(cdiff_filename)
+                self.state['dbs'][db]['CDIFFs'].append(cdiff_filename)
 
                 # Prune old CDIFFs if needed
-                if len(self.config['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
+                if len(self.state['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
                     try:
-                        os.remove(self.db_dir / self.config['dbs'][db]['CDIFFs'][0])
+                        os.remove(self.db_dir / self.state['dbs'][db]['CDIFFs'][0])
                     except Exception as exc:
                         self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                         self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
 
-                    self.config['dbs'][db]['CDIFFs'] = self.config['dbs'][db]['CDIFFs'][1:]
+                    self.state['dbs'][db]['CDIFFs'] = self.state['dbs'][db]['CDIFFs'][1:]
 
             elif response.status_code == 429:
                 # Rejected because downloading the same file too frequently.
@@ -740,7 +778,7 @@ class CVDUpdate:
                 if 'Retry-After' in response.headers.keys():
                     try_again_seconds = int(response.headers['Retry-After'])
 
-                self.config['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
+                self.state['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
 
                 try_again_string = str(datetime.timedelta(seconds=try_again_seconds))
                 self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
@@ -765,7 +803,7 @@ class CVDUpdate:
         # Now download the available version.
         desired_version = available_version
 
-        url = f"{self.config['dbs'][db]['url']}?version={desired_version}"
+        url = f"{self.state['dbs'][db]['url']}?version={desired_version}"
 
         return self._download_db_from_url(db, url, last_modified=0, version=desired_version)
 
@@ -863,7 +901,7 @@ class CVDUpdate:
         self._query_dns_txt_entry()
         if self.dns_version_tokens == []:
             # Query failed. Bail out.
-            self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
+            self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.state['dbs'][db]['url']}")
             return 1
 
         if debug_mode:
@@ -873,34 +911,34 @@ class CVDUpdate:
             '''
             Update a database
             '''
-            if self.config['dbs'][db]['retry after'] > 0:
-                cooldown_date = datetime.datetime.fromtimestamp(self.config['dbs'][db]['retry after']).strftime('%Y-%m-%d %H:%M:%S')
+            if self.state['dbs'][db]['retry after'] > 0:
+                cooldown_date = datetime.datetime.fromtimestamp(self.state['dbs'][db]['retry after']).strftime('%Y-%m-%d %H:%M:%S')
 
-                if self.config['dbs'][db]['retry after'] > time.time():
+                if self.state['dbs'][db]['retry after'] > time.time():
                     self.logger.warning(f"Skipping {db} which is on cooldown until {cooldown_date}")
                     return CvdStatus.ERROR
                 else:
                     # Cooldown expired. Ok to try again.
-                    self.config['dbs'][db]['retry after'] = 0
+                    self.state['dbs'][db]['retry after'] = 0
                     self.logger.info(f"{db} cooldown expired {cooldown_date}. OK to try again...")
 
-            if not self.config['dbs'][db]['url'].startswith('http'):
-                self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.config['dbs'][db]['url']}")
+            if not self.state['dbs'][db]['url'].startswith('http'):
+                self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.state['dbs'][db]['url']}")
                 return CvdStatus.ERROR
 
-            self.logger.debug(f"Checking {db} for update from {self.config['dbs'][db]['url']}")
+            self.logger.debug(f"Checking {db} for update from {self.state['dbs'][db]['url']}")
 
             if db.endswith('.cvd'):
                 # It's a CVD (official signed clamav database)
                 advertised_version = 0
 
-                if self.config['dbs'][db]['local version'] == 0 and (self.db_dir / db).exists():
+                if self.state['dbs'][db]['local version'] == 0 and (self.db_dir / db).exists():
                     # Seems like we somehow got a CVD in our database directory without
                     # saving the CVD info to the config. Let's just update the version field.
-                    self.config['dbs'][db]['local version'] = self._get_cvd_version_from_file(self.db_dir / db)
+                    self.state['dbs'][db]['local version'] = self._get_cvd_version_from_file(self.db_dir / db)
 
 
-                if self.config['dbs'][db]['DNS field'] > 0:
+                if self.state['dbs'][db]['DNS field'] > 0:
                     # We can use the DNS TXT fields to check if our version is old.
                     advertised_version = self._query_cvd_version_dns(db)
 
@@ -910,7 +948,7 @@ class CVDUpdate:
 
                     # First, make sure no one tampered with the DNS field for
                     # main/daily/bytecode when using database.clamav.net
-                    if (('database.clamav.net' in self.config['dbs'][db]['url']) and
+                    if (('database.clamav.net' in self.state['dbs'][db]['url']) and
                         (db == 'main.cvd' or db == 'daily.cvd' or db == 'bytecode.cvd')):
                         self.logger.error(f'It appears that the "DNS field" in {self.config_path} for "{db}" was modified from the default.')
                         self.logger.error(f'Updating {db} from database.clamav.net requires DNS for the version check in order to conserve bandwidth.')
@@ -931,12 +969,12 @@ class CVDUpdate:
                 # If Not-Modified, it will not replace the current database.
                 return self._download_db_from_url(
                     db,
-                    self.config['dbs'][db]['url'],
-                    self.config['dbs'][db]['last modified'])
+                    self.state['dbs'][db]['url'],
+                    self.state['dbs'][db]['last modified'])
 
         if db == "":
             # Update every DB.
-            for db in self.config['dbs']:
+            for db in self.state['dbs']:
                 status = update(db)
                 if status == CvdStatus.ERROR:
                     self.update_errors += 1
@@ -945,7 +983,7 @@ class CVDUpdate:
 
         else:
             # Update a specific DB.
-            if db not in self.config['dbs']:
+            if db not in self.state['dbs']:
                 self.logger.error(f"Update failed. Unknown database: {db}")
             else:
                 status = update(db)
@@ -985,12 +1023,12 @@ class CVDUpdate:
             ]:
             self.logger.warning(f"{db} does not have valid clamav database file extension.")
 
-        if db in self.config['dbs']:
+        if db in self.state['dbs']:
             self.logger.info(f"Cannot add {db}, it is already in our list.")
             self.logger.info(f"Hint: Try `db list -V` or `db show {db}` for more information.")
             return False
 
-        self.config['dbs'][db] = {
+        self.state['dbs'][db] = {
             "url" : url,
             "retry after" : 0,
             "last modified" : 0,
@@ -1011,7 +1049,7 @@ class CVDUpdate:
         """
         Remove a database from our list, and delete copies of the DB from the database directory.
         """
-        if db not in self.config['dbs']:
+        if db not in self.state['dbs']:
             self.logger.info(f"Cannot remove {db}, it is not in our list.")
             self.logger.info(f"Hint: Try `db list -V` for more information.")
             return False
@@ -1025,7 +1063,7 @@ class CVDUpdate:
             self.logger.debug(f"An exception occured: {exc}")
             self.logger.error(f"Failed to delete {db} from databse directory!")
 
-        for cdiff in self.config['dbs'][db]['CDIFFs']:
+        for cdiff in self.state['dbs'][db]['CDIFFs']:
             try:
                 if (self.db_dir / cdiff).exists():
                     os.remove(str(self.db_dir / cdiff))
@@ -1035,7 +1073,7 @@ class CVDUpdate:
                 self.logger.debug(f"An exception occured: {exc}")
                 self.logger.error(f"Failed to delete {cdiff} from databse directory!")
 
-        self.config['dbs'].pop(db)
+        self.state['dbs'].pop(db)
 
         self.logger.info(f"Removed {db} from DB list.")
 
