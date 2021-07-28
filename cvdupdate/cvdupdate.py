@@ -45,7 +45,6 @@ class CvdStatus(Enum):
 class CVDUpdate:
 
     default_config_path: Path = Path.home() / ".cvdupdate" / "config.json"
-    default_state_path: Path = Path.home() / ".cvdupdate" / "state.json"
 
     default_config: dict = {
         "nameserver" : "",
@@ -59,7 +58,7 @@ class CVDUpdate:
         "db directory" : str(Path.home() / ".cvdupdate" / "database"),
         "rotate cdiffs" : True,
         "# cdiffs to keep" : 30,
-        "state file": str(default_state_path),
+        "state file": "",
     }
 
     default_state: dict = {
@@ -181,7 +180,7 @@ class CVDUpdate:
         need_save = False
 
         if config == "":
-            self.config_path = self.default_config_path
+            self.config_path = copy.deepcopy(self.default_config_path)
         else:
             self.config_path = Path(config)
 
@@ -191,12 +190,7 @@ class CVDUpdate:
                 self.config = json.load(config_file)
         else:
             # Config does not exist, use default
-            self.config = self.default_config
-            need_save = True
-
-        if 'uuid' not in self.config:
-            # Create a UUID to put in our User-Agent for better (anonymous) metrics
-            self.config['uuid'] = str(uuid.uuid4())
+            self.config = copy.deepcopy(self.default_config)
             need_save = True
 
         if db_dir != "":
@@ -221,25 +215,38 @@ class CVDUpdate:
             self.config['max retry'] = 3
             need_save = True
 
-        # keep database state in a separate file
-        if 'state file' not in self.config:
-            self.config['state file'] = self.default_state_path
+        if not hasattr(self, 'state'):
+            self.state = {}
+
+        # keep database state in a separate file, defaulting to same dir as config file
+        if 'state file' not in self.config or self.config['state file'] == '':
+            self.config['state file'] = str(self.config_path.parent / "state.json")
             need_save = True
-            # handle migration of 'dbs' from config.json to state.json
-            if 'dbs' in self.config:
-                self.state = self.config['dbs']
-                del self.config['dbs']
+
+        # handle migration of from config.json to state.json
+        if 'dbs' in self.config:
+            self.state = self.config['dbs']
+            del self.config['dbs']
+
+        if 'uuid' in self.config:
+            self.state['uuid'] = self.config['uuid']
+            del self.config['uuid']
 
         state_file = Path(self.config['state file'])
         if state_file.exists():
             # state file exists, load it.
             with state_file.open('r') as st_fi:
                 self.state = json.load(st_fi)
-        elif not hasattr(self, 'state') or 'dbs' not in self.state:
+        elif self.state == {} or 'dbs' not in self.state:
             # state file does not exist
             # so we either have a fresh install or we have a messed up json
             # create a skeleton structure
-            self.state = self.default_state
+            self.state = copy.deepcopy(self.default_state)
+            need_save = True
+
+        if 'uuid' not in self.state:
+            # Create a UUID to put in our User-Agent for better (anonymous) metrics
+            self.state['uuid'] = str(uuid.uuid4())
             need_save = True
 
         if need_save:
@@ -249,13 +256,14 @@ class CVDUpdate:
         """
         Save the current configuration.
         """
-        if not self.config_path.parent.exists():
-            # config directory doesn't exist yet
-            try:
-                os.makedirs(str(self.config_path.parent))
-            except Exception as exc:
-                print("Failed to create config directory!")
-                raise exc
+        for fi in (self.config_path, Path(self.config['state file'])):
+            if not fi.parent.exists():
+                # parent directory doesn't exist yet
+                try:
+                    os.makedirs(str(fi.parent))
+                except Exception as exc:
+                    print("Failed to create config directory!")
+                    raise exc
 
         try:
             with self.config_path.open('w') as config_file:
