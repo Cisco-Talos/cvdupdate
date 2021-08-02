@@ -39,7 +39,7 @@ import coloredlogs
 from http.server import HTTPServer
 from RangeHTTPServer import RangeRequestHandler
 
-
+from cvdupdate import auto_updater
 import pkg_resources
 from cvdupdate.cvdupdate import CVDUpdate
 
@@ -200,8 +200,9 @@ def clean_all(config: str, verbose: bool):
 @cli.command("serve")
 @click.option("--config", "-c", type=click.Path(), required=False, default="", help="Config path. [optional]")
 @click.option("--verbose", "-V", is_flag=True, default=False, help="Verbose output. [optional]")
+@click.option("--update-interval-seconds", "-U", type=click.INT, required=False, default=0, help="Time in seconds before the next database update")
 @click.argument("port", type=int, required=False, default=8000)
-def serve(port: int, config: str, verbose: bool):
+def serve(port: int, config: str, verbose: bool, update_interval_seconds: int):
     """
     Serve up the database directory. Not a production quality server.
     Intended for testing purposes.
@@ -209,6 +210,7 @@ def serve(port: int, config: str, verbose: bool):
     m = CVDUpdate(config=config, verbose=verbose)
     os.chdir(str(m.db_dir))
     m.logger.info(f"Serving up {m.db_dir} on localhost:{port}...")
+    auto_updater.start(update_interval_seconds)
 
     RangeRequestHandler.protocol_version = 'HTTP/1.0'
     # TODO(danvk): pick a random, available port
