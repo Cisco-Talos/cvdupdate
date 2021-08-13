@@ -807,7 +807,7 @@ class CVDUpdate:
                 self.logger.debug(f'cvdupdate is up-to-date: {current_version}.')
                 return True
             else:
-                self.logger.warning(f'You are running cvdupate version: {current_version}.')
+                self.logger.warning(f'You are running cvdupdate version: {current_version}.')
                 self.logger.warning(f'There is a newer version on PyPI: {latest_version}. Please update!')
                 return False
 
