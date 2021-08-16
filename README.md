@@ -169,7 +169,7 @@ export https_proxy
 cvd update -V
 ```
 
-> _Disclaimer_: CVD-Update doesn't support proxies that require authentication at this time. If your network admin allows it, you may be able to work around it by updating your proxy to allow HTTP requests through unauthenticated if the User-Agent matches your specific CVD-Update user agent. The CVD-Update User-Agent follows the form `CVDUPDATE/<version> (<uuid>)` where the `uuid` is unique to your installation and can be found in the `~/.cvdupdate/config.json` file. See https://github.com/Cisco-Talos/cvdupdate/issues/9 for more details.
+> _Disclaimer_: CVD-Update doesn't support proxies that require authentication at this time. If your network admin allows it, you may be able to work around it by updating your proxy to allow HTTP requests through unauthenticated if the User-Agent matches your specific CVD-Update user agent. The CVD-Update User-Agent follows the form `CVDUPDATE/<version> (<uuid>)` where the `uuid` is unique to your installation and can be found in the `~/.cvdupdate/state.json` file (or `~/.cvdupdate/config.json` for cvdupdate <=1.0.2). See https://github.com/Cisco-Talos/cvdupdate/issues/9 for more details.
 >
 > Adding support for proxy authentication is a ripe opportunity for a community contribution to the project.
 
@@ -182,6 +182,7 @@ This tool is to creates the following directories:
 
 This tool creates the following files:
  - `~/.cvdupdate/config.json`
+ - `~/.cvdupdate/state.json`
  - `~/.cvdupdate/databases/<database>.cvd`
  - `~/.cvdupdate/databases/<database>-<version>.cdiff`
  - `~/.cvdupdate/logs/<date>.log`
