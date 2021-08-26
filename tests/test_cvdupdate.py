@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
+import shutil
 
 from tests.fixtures.revert import revert_homedir
-import pytest
 
 from cvdupdate.cvdupdate import CVDUpdate
 
@@ -65,3 +65,37 @@ def test_default_config_not_mutated(revert_homedir, tmp_path):
     assert id(a.default_config) == id(b.default_config) == id(CVDUpdate.default_config)
     assert a.state != b.state
     assert id(a.default_state) == id(b.default_state)
+
+
+def test_existing_state_migrates_successfully(revert_homedir):
+    ''' specifically test migrating an existing config.json to config + state.json'''
+    default_cvdupdate_dir = Path.home() / '.cvdupdate/'
+    default_cvdupdate_dir.mkdir(parents=True)
+
+    # create a .cvdupdate/config.json which also contains dbs definitions
+    old_config_file = 'tests/files/v1.0.2.config.json'
+    old_config_json = json.loads(Path(old_config_file).read_text())
+
+    shutil.copyfile(old_config_file, str(default_cvdupdate_dir / 'config.json'))
+
+    # create cvdupdate object, which will read config.json and split state into state.json
+    a = CVDUpdate()
+
+    new_config_json = old_config_json
+
+    # create expected state.json contents by copying the bits that move
+    new_state_json = {}
+    new_state_json['dbs'] = old_config_json['dbs']
+    new_state_json['uuid'] = old_config_json['uuid']
+
+    # new update the config.json contents
+    del new_config_json['dbs']
+    del new_config_json['uuid']
+    new_config_json['state file'] = str(default_cvdupdate_dir / 'state.json')
+
+    # compare actual result with expected transform
+    with open(default_cvdupdate_dir / 'config.json') as config:
+        assert new_config_json == json.loads(config.read())
+    with open(default_cvdupdate_dir / 'state.json') as state:
+        from pprint import pprint
+        assert new_state_json == json.loads(state.read())

@@ -1,0 +1,47 @@
+{
+    "nameserver": "",
+    "max retry": 3,
+    "log directory": "/root/.cvdupdate/logs",
+    "rotate logs": true,
+    "# logs to keep": 30,
+    "db directory": "/root/.cvdupdate/database",
+    "rotate cdiffs": true,
+    "# cdiffs to keep": 30,
+    "dbs": {
+        "main.cvd": {
+            "url": "https://database.clamav.net/main.cvd",
+            "retry after": 0,
+            "last modified": 1630006664.9941857,
+            "last checked": 1630007653.4594204,
+            "DNS field": 1,
+            "local version": 61,
+            "CDIFFs": [
+                "main-61.cdiff"
+            ]
+        },
+        "daily.cvd": {
+            "url": "https://database.clamav.net/daily.cvd",
+            "retry after": 0,
+            "last modified": 1630006682.7596042,
+            "last checked": 1630007653.4598472,
+            "DNS field": 2,
+            "local version": 26275,
+            "CDIFFs": [
+                "daily-26275.cdiff"
+            ]
+        },
+        "bytecode.cvd": {
+            "url": "https://database.clamav.net/bytecode.cvd",
+            "retry after": 0,
+            "last modified": 1630006683.3627465,
+            "last checked": 1630007653.46013,
+            "DNS field": 7,
+            "local version": 333,
+            "CDIFFs": [
+                "bytecode-333.cdiff"
+            ]
+       }
+    },
+    "uuid": "d93cd3bb-b2ee-4e6c-995b-aee50f7c3afb"
+}
+
