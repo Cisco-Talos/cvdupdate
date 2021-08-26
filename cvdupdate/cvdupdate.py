@@ -223,9 +223,9 @@ class CVDUpdate:
             self.config['state file'] = str(self.config_path.parent / "state.json")
             need_save = True
 
-        # handle migration of from config.json to state.json
+        # handle migration from config.json to state.json
         if 'dbs' in self.config:
-            self.state = self.config['dbs']
+            self.state['dbs'] = self.config['dbs']
             del self.config['dbs']
 
         if 'uuid' in self.config:
@@ -558,7 +558,7 @@ class CVDUpdate:
 
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
-                'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 'Range': 'bytes=0-95',
                 'If-Modified-Since': ims,
             })
@@ -626,7 +626,7 @@ class CVDUpdate:
 
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
-                'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 'If-Modified-Since': ims,
             })
 
@@ -736,7 +736,7 @@ class CVDUpdate:
 
             while retry < self.config['max retry']:
                 response = requests.get(url, headers = {
-                    'User-Agent': f'CVDUPDATE/{self.version} ({self.config["uuid"]})',
+                    'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 })
 
                 if ((response.status_code == 200 or response.status_code == 206) and
