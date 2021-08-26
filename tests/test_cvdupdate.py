@@ -17,17 +17,17 @@ def test_alternate_config_locations(revert_homedir, tmp_path):
 
     # set the config file to be in pytests's /tmp/pytest-*
     config_file_path = tmp_path / 'config.json'
-    cvd = CVDUpdate(config=config_file_path)
+    c = CVDUpdate(config=config_file_path)
 
     # verify the file is created and has default config data inside
     assert config_file_path.exists()
     txt = config_file_path.read_text()
     assert txt
     config_file_json = json.loads(txt)
-    assert config_file_json == cvd.config
+    assert config_file_json == c.config
     # state file value will differ, so blank it out for comparing
-    cvd.config['state file'] = ''
-    assert cvd.config == cvd.default_config
+    c.config['state file'] = ''
+    assert c.config == c.default_config
 
     # verify the state file is created and has default data inside
     state_file_path = tmp_path / 'state.json'
@@ -35,10 +35,10 @@ def test_alternate_config_locations(revert_homedir, tmp_path):
     txt = state_file_path.read_text()
     assert txt
     state_file_json = json.loads(txt)
-    assert state_file_json == cvd.state
+    assert state_file_json == c.state
     # again, uuid will differ, so toss it out
-    del cvd.state['uuid']
-    assert cvd.state == cvd.default_state
+    del c.state['uuid']
+    assert c.state == c.default_state
 
     # ~/.cvdupdate exists, because we haven't changed the logdir location
     # but that's all it should have in it
