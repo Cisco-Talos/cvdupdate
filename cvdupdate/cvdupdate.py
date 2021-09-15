@@ -255,12 +255,12 @@ class CVDUpdate:
 
     def clean_dbs(self):
         """
-        Delete all files in the database directory.
+        Delete cvd controlled files in the database directory.
         """
-        self.logger.info(f"Deleting databases...")
-        dbs = self.db_dir.glob('*')
+        dbs = self.config['dbs'].keys()
         for db in dbs:
-            os.remove(str(db))
+            cvddb = str(self.db_dir) + "/" + db
+            os.remove(cvddb)
             self.logger.info(f"Deleted: {db}")
 
     def clean_logs(self):
