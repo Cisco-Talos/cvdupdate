@@ -303,9 +303,33 @@ class CVDUpdate:
         """
         dbs = self.state['dbs'].keys()
         for db in dbs:
-            cvddb = str(self.db_dir / db)
-            os.remove(cvddb)
-            self.logger.info(f"Deleted: {db}")
+            cvddb = self.db_dir / db
+            if cvddb.exists():
+                try:
+                    self.logger.info(f"Deleting: {db}")
+                    os.remove(str(cvddb))
+                except Exception as exc:
+                    self.logger.debug(f"Tried to remove {db}")
+                    raise exc
+
+        # Remove / clear all CDIFFs
+        cdiff_files = self.db_dir.glob('*.cdiff')
+        for cdiff in cdiff_files:
+            try:
+                self.logger.info(f"Deleting CDIFF: {cdiff.name}")
+                os.remove(str(cdiff))
+            except Exception as exc:
+                self.logger.debug(f"Tried to remove cdiffs.")
+
+        # Config cleanup
+        for db in dbs:
+            self.state['dbs'][db]['CDIFFs'] = []
+            self.state['dbs'][db]['last modified'] = 0
+            self.state['dbs'][db]['last checked'] = 0
+            self.state['dbs'][db]['local version'] = 0
+
+        # Save config
+        self._save_config()
 
     def clean_logs(self):
         """
