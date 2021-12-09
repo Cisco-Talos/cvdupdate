@@ -410,17 +410,13 @@ class CVDUpdate:
         try:
             our_resolver = resolver.Resolver()
             our_resolver.timeout = 5 # Explicitly setting query timeout to mitigate https://github.com/Cisco-Talos/cvdupdate/issues/17
-            nameserver = os.environ.get("CVDUPDATE_NAMESERVER")
+            nameservers = self._get_nameserver_configuration()
 
-            if nameserver != None:
-                # Override the default nameserver using the CVDUPDATE_NAMESERVER environment variable.
-                our_resolver.nameservers = [nameserver]
-                self.logger.info(f"Using nameserver specified in CVDUPDATE_NAMESERVER: {nameserver}")
-
-            elif self.config['nameserver'] != "":
-                # Override the default nameserver using a config setting.
-                our_resolver.nameservers = [self.config['nameserver']]
-                self.logger.info(f"Using nameserver specified in the config: {self.config['nameserver']}")
+            if nameservers:
+                our_resolver.nameservers = nameservers
+                self.logger.info(f"Using nameservers: {nameservers}")
+            else:
+                self.logger.info("Using system configured nameservers")
 
             answer = str(our_resolver.resolve("current.cvd.clamav.net","TXT").response.answer[0])
             versions = re.search('".*"', answer).group().strip('"')
@@ -431,6 +427,39 @@ class CVDUpdate:
             self.logger.warning(f"Failed to determine available version via DNS TXT query!")
 
         return got_it
+
+    def _get_nameserver_configuration(self) -> list[str]:
+        '''
+        Parse comma delimited nameserver string into a list for Resolver
+        '''
+        nameserver_string = self._get_nameserver_string()
+        nameservers = []
+
+        if nameserver_string != "":
+            try:
+                nameservers = [x.strip() for x in nameserver_string.split(',')]
+            except Exception as exc:
+                self.logger.warning(f"Failed to parse nameserver configuration: {nameserver_string}, ignoring...")
+                nameservers = []
+
+        return nameservers
+
+    def _get_nameserver_string(self) -> str:
+        '''
+        Determine user provided nameserver configuration
+        '''
+        config_nameserver = self.config['nameserver']
+        env_nameserver = os.environ.get("CVDUPDATE_NAMESERVER")
+
+        # Environment variable overrides the configuration setting
+        if env_nameserver != None and env_nameserver != "":
+            self.logger.info(f"Found CVDUPDATE_NAMESERVER environment variable to provide nameservers: {env_nameserver}")
+            return env_nameserver
+        elif config_nameserver != None and config_nameserver != "":
+            self.logger.info(f"Found confiruation provided nameservers: {config_nameserver}")
+            return config_nameserver
+
+        return ""
 
     def _query_cvd_version_dns(self, db: str) -> int:
         '''
