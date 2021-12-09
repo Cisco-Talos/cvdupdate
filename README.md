@@ -140,6 +140,8 @@ DNS is required for CVD-Update to function properly (to gather the TXT record co
 
 The environment variable will take precedence over the nameserver config setting.
 
+Note:  Both options can be used to provide a comma-delimited list of nameservers to utilize for resolution.
+
 ### Using a proxy
 
 Depending on your type of proxy, you may be able to use CVD-Update with your proxy by running CVD-Update like this:
