@@ -12,7 +12,7 @@ def test_instantiation(revert_homedir):
 def test_alternate_config_locations(revert_homedir, tmp_path):
     ''' Test that we can save config and state files to alternative locations '''
     # ensure we're starting with a clean slate
-    default_cvdupdate_dir = Path.home() / '.cvdupdate/'
+    default_cvdupdate_dir = Path.home() / '.cvdupdate'
     assert not default_cvdupdate_dir.exists()
 
     # set the config file to be in pytests's /tmp/pytest-*
@@ -42,7 +42,7 @@ def test_alternate_config_locations(revert_homedir, tmp_path):
 
     # ~/.cvdupdate exists, because we haven't changed the logdir location
     # but that's all it should have in it
-    default_cvdupdate_dir = Path.home() / '.cvdupdate/'
+    default_cvdupdate_dir = Path.home() / '.cvdupdate'
     assert default_cvdupdate_dir.exists()
     children = list(default_cvdupdate_dir.iterdir())
     assert len(children) == 1
@@ -69,14 +69,17 @@ def test_default_config_not_mutated(revert_homedir, tmp_path):
 
 def test_existing_state_migrates_successfully(revert_homedir):
     ''' specifically test migrating an existing config.json to config + state.json'''
-    default_cvdupdate_dir = Path.home() / '.cvdupdate/'
+    default_cvdupdate_dir = Path.home() / '.cvdupdate'
     default_cvdupdate_dir.mkdir(parents=True)
 
     # create a .cvdupdate/config.json which also contains dbs definitions
     old_config_file = 'tests/files/v1.0.2.config.json'
     old_config_json = json.loads(Path(old_config_file).read_text())
+    old_config_json["log directory"] = str(default_cvdupdate_dir / 'logs')
+    old_config_json["db directory"] = str(default_cvdupdate_dir / 'database')
 
-    shutil.copyfile(old_config_file, str(default_cvdupdate_dir / 'config.json'))
+    with (default_cvdupdate_dir / 'config.json').open('w') as test_config:
+        json.dump(old_config_json, test_config)
 
     # create cvdupdate object, which will read config.json and split state into state.json
     a = CVDUpdate()

@@ -12,7 +12,7 @@ pytest_plugins = [
 # prevent any test from running if the default .cvdupdate directory already exists
 @pytest.fixture(scope='session', autouse=True)
 def fail_if_cvdupdate_dir_exists():
-    defaultdir = Path.home() / '.cvdupdate/'
+    defaultdir = Path.home() / '.cvdupdate'
     if defaultdir.exists():
         pytest.exit(dedent(f'''
             Error: {defaultdir} exists.
