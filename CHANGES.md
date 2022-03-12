@@ -8,6 +8,66 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.1.0
+
+➕ CVD-Update can now get the DNS nameserver IP from an environment variable.
+
+  Specify the IP address of the nameserver in the environment variable
+  `CVDUPDATE_NAMESERVER` to ensure said nameserver is used when querying the
+  TXT record containing the current database definition version available.
+
+  Using this environment variable will take precedence over any option specified
+  in the config file.
+
+  Feature courtesy of Philippe Ballandras.
+
+➕ CVD-Update can now accept multiple DNS nameservers from the `nameserver`
+  config option, or from the `CVDUPDATE_NAMESERVER` environment variable.
+
+  To set multiple DNS nameservers, specify the `nameserver` config option or the
+  `CVDUPDATE_NAMESERVER` environment variable as a comma separated list.
+
+  E.g.:
+  ```bash
+  CVDUPDATE_NAMESERVER=1.1.1.1,8.8.8.8 cvd update
+  ```
+
+  Feature courtesy of Michael Callahan.
+
+🐛 In prior versions, CVD-Update would assume that a CVD file exists because it
+  is listed in the `config.json` "dbs" record. So if you delete that file by
+  accident and try to update, it would not notice and would instead claim that
+  it is up-to-date. In this release, CVD-Update will detect that a deleted file
+  is missing from the database directory and will re-download it.
+
+  Fix courtesy of Brent Clark.
+
+🌌 CVD-Update will no longer remove extra files from the database directory
+  when you run `cvd clean dbs`. It will only remove those file managed by the
+  CVD-Update tool.
+
+  This means that you can now store third-party extra signature databases in the
+  CVD-Update database directory and CVD-Update will not delete them if you run
+  the clean command.
+
+  Improvement courtesy of Brent Clark.
+
+🌌 CVD-Update now stores the database state information separately from the
+  configuration information. If you're upgrading from CVD-Update version 1.0.2,
+  your `config.json` file will be migrated automatatically when you run
+  `cvd update` to split it into `config.json` + `state.json`.
+
+  This change allows you to administrate the CVD-Update config files with a
+  config management tool.
+
+  Improvement courtesy of Bill Sanders.
+
+Special thanks to:
+- Bill Sanders
+- Brent Clark
+- Michael Callahan
+- Philippe Ballandras
+
 ## Version 1.0.2
 
 🐛 Fixed a Python 3.6 compatibility issue in the package version check.

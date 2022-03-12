@@ -1,5 +1,5 @@
 """
-Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+Copyright (C) 2021-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
 
 This module provides a tool to download and update clamav databases and database
 patch files (CDIFFs) for the purposes of hosting your own database mirror.
