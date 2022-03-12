@@ -1,6 +1,6 @@
 <p align="center">A tool to download and update clamav databases and database patch files
 for the purposes of hosting your own database mirror.
-<p align="center"><em>Copyright (C) 2021 Cisco Systems, Inc. and/or its affiliates. All rights reserved.</em></p>
+<p align="center"><em>Copyright (C) 2021-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.</em></p>
 
 <p align="center">
 <a href="https://pypi.org/project/cvdupdate/">
