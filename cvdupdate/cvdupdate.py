@@ -428,7 +428,7 @@ class CVDUpdate:
 
         return got_it
 
-    def _get_nameserver_configuration(self) -> list[str]:
+    def _get_nameserver_configuration(self) -> List[str]:
         '''
         Parse comma delimited nameserver string into a list for Resolver
         '''
@@ -456,7 +456,7 @@ class CVDUpdate:
             self.logger.info(f"Found CVDUPDATE_NAMESERVER environment variable to provide nameservers: {env_nameserver}")
             return env_nameserver
         elif config_nameserver != None and config_nameserver != "":
-            self.logger.info(f"Found confiruation provided nameservers: {config_nameserver}")
+            self.logger.info(f"Found configuration provided nameservers: {config_nameserver}")
             return config_nameserver
 
         return ""
