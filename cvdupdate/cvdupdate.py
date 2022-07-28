@@ -24,6 +24,7 @@ from enum import Enum
 import json
 import logging
 import os
+import platform
 import pkg_resources
 import re
 import subprocess
@@ -505,12 +506,19 @@ class CVDUpdate:
         nameserver_string = self._get_nameserver_string()
         nameservers = []
 
+        os_platform = platform.platform()
+        operating_system = os_platform.split("-")[0].lower()
+
         if nameserver_string != "":
             try:
                 nameservers = [x.strip() for x in nameserver_string.split(',')]
             except Exception as exc:
                 self.logger.warning(f"Failed to parse nameserver configuration: {nameserver_string}, ignoring...")
                 nameservers = []
+
+        if nameservers == [] and operating_system == "windows":
+            # Try OpenDNS nameservers on Windows if not overridden by the user, because leaving it empty seems to fail.
+            nameservers = ['208.67.222.222', '208.67.220.220']
 
         return nameservers
 
@@ -933,7 +941,7 @@ class CVDUpdate:
         self._query_dns_txt_entry()
         if self.dns_version_tokens == []:
             # Query failed. Bail out.
-            self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.state['dbs'][db]['url']}")
+            self.logger.error(f"Failed to update: DNS query failed.")
             return 1
 
         if debug_mode:
