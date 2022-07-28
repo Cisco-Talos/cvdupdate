@@ -23,6 +23,13 @@ Run this tool as often as you like, but it will only download new content if the
 
 - Python 3.6 or newer.
 - An internet connection with DNS enabled.
+- The following Python packages.  These will be installed automatically if you use `pip`, but may need to be installed manually otherwise:
+  - `click` v7.0 or newer
+  - `coloredlogs` v10.0 or newer
+  - `colorama`
+  - `requests`
+  - `dnspython` v2.1.0 or newer
+  - `rangehttpserver`
 
 ## Installation
 
