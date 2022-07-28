@@ -763,6 +763,8 @@ class CVDUpdate:
 
             if (self.db_dir / cdiff_filename).exists():
                 self.logger.debug(f"We already have {cdiff_filename}. Skipping...")
+                desired_version += 1
+                continue
 
             self.logger.debug(f"Checking for {cdiff_filename}")
 
