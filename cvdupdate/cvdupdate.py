@@ -24,6 +24,7 @@ from enum import Enum
 import json
 import logging
 import os
+import platform
 import pkg_resources
 import re
 import subprocess
@@ -505,12 +506,19 @@ class CVDUpdate:
         nameserver_string = self._get_nameserver_string()
         nameservers = []
 
+        os_platform = platform.platform()
+        operating_system = os_platform.split("-")[0].lower()
+
         if nameserver_string != "":
             try:
                 nameservers = [x.strip() for x in nameserver_string.split(',')]
             except Exception as exc:
                 self.logger.warning(f"Failed to parse nameserver configuration: {nameserver_string}, ignoring...")
                 nameservers = []
+
+        if nameservers == [] and operating_system == "windows":
+            # Try OpenDNS nameservers on Windows if not overridden by the user, because leaving it empty seems to fail.
+            nameservers = ['208.67.222.222', '208.67.220.220']
 
         return nameservers
 
@@ -755,6 +763,8 @@ class CVDUpdate:
 
             if (self.db_dir / cdiff_filename).exists():
                 self.logger.debug(f"We already have {cdiff_filename}. Skipping...")
+                desired_version += 1
+                continue
 
             self.logger.debug(f"Checking for {cdiff_filename}")
 
@@ -933,7 +943,7 @@ class CVDUpdate:
         self._query_dns_txt_entry()
         if self.dns_version_tokens == []:
             # Query failed. Bail out.
-            self.logger.error(f"Failed to update {db}. Missing or invalid URL: {self.state['dbs'][db]['url']}")
+            self.logger.error(f"Failed to update: DNS query failed.")
             return 1
 
         if debug_mode:
@@ -960,57 +970,54 @@ class CVDUpdate:
 
             self.logger.debug(f"Checking {db} for update from {self.state['dbs'][db]['url']}")
 
-            # CVD will continue with the cdiffs even if the main signature
-            # is missing from our database directory
-            if (self.db_dir / db).exists():
-                if db.endswith('.cvd'):
-                    # It's a CVD (official signed clamav database)
-                    advertised_version = 0
+            if db.endswith('.cvd'):
+                # It's a CVD (official signed clamav database)
+                advertised_version = 0
 
-                    if self.state['dbs'][db]['local version'] == 0 and (self.db_dir / db).exists():
+                if (self.db_dir / db).exists():
+                    if self.state['dbs'][db]['local version'] == 0:
                         # Seems like we somehow got a CVD in our database directory without
                         # saving the CVD info to the config. Let's just update the version field.
                         self.state['dbs'][db]['local version'] = self._get_cvd_version_from_file(self.db_dir / db)
+                else:
+                    if self.state['dbs'][db]['local version'] != 0:
+                        # We have a local version but no CVD in the database directory.
+                        # Maybe it was moved or deleted? Let's just reset the local version.
+                        self.state['dbs'][db]['local version'] = 0
 
-
-                    if self.state['dbs'][db]['DNS field'] > 0:
-                        # We can use the DNS TXT fields to check if our version is old.
-                        advertised_version = self._query_cvd_version_dns(db)
-
-                    else:
-                        # We can't use DNS to see if our version is old.
-                        # Use HTTP to pull just the CVD header to check.
-
-                        # First, make sure no one tampered with the DNS field for
-                        # main/daily/bytecode when using database.clamav.net
-                        if (('database.clamav.net' in self.state['dbs'][db]['url']) and
-                            (db == 'main.cvd' or db == 'daily.cvd' or db == 'bytecode.cvd')):
-                            self.logger.error(f'It appears that the "DNS field" in {self.config_path} for "{db}" was modified from the default.')
-                            self.logger.error(f'Updating {db} from database.clamav.net requires DNS for the version check in order to conserve bandwidth.')
-                            self.logger.error(f'Please restore the default settings for the "DNS field" and try again.')
-                            return CvdStatus.ERROR
-
-                        advertised_version = self._query_cvd_version_http(db)
-
-                    if advertised_version == 0:
-                        self.logger.error(f"Failed to update {db}. Failed to query available CVD version")
-                        return CvdStatus.ERROR
-
-                    return self._download_cvd(db, advertised_version)
+                if self.state['dbs'][db]['DNS field'] > 0:
+                    # We can use the DNS TXT fields to check if our version is old.
+                    advertised_version = self._query_cvd_version_dns(db)
 
                 else:
-                    # Try the download.
-                    # Will use If-Modified-Since
-                    # If Not-Modified, it will not replace the current database.
-                    return self._download_db_from_url(
-                        db,
-                        self.state['dbs'][db]['url'],
-                        self.state['dbs'][db]['last modified'])
+                    # We can't use DNS to see if our version is old.
+                    # Use HTTP to pull just the CVD header to check.
+
+                    # First, make sure no one tampered with the DNS field for
+                    # main/daily/bytecode when using database.clamav.net
+                    if (('database.clamav.net' in self.state['dbs'][db]['url']) and
+                        (db == 'main.cvd' or db == 'daily.cvd' or db == 'bytecode.cvd')):
+                        self.logger.error(f'It appears that the "DNS field" in {self.config_path} for "{db}" was modified from the default.')
+                        self.logger.error(f'Updating {db} from database.clamav.net requires DNS for the version check in order to conserve bandwidth.')
+                        self.logger.error(f'Please restore the default settings for the "DNS field" and try again.')
+                        return CvdStatus.ERROR
+
+                    advertised_version = self._query_cvd_version_http(db)
+
+                if advertised_version == 0:
+                    self.logger.error(f"Failed to update {db}. Failed to query available CVD version")
+                    return CvdStatus.ERROR
+
+                return self._download_cvd(db, advertised_version)
+
             else:
+                # Try the download.
+                # Will use If-Modified-Since
+                # If Not-Modified, it will not replace the current database.
                 return self._download_db_from_url(
                     db,
                     self.state['dbs'][db]['url'],
-                    last_modified=0)
+                    self.state['dbs'][db]['last modified'])
 
         if db == "":
             # Update every DB.

@@ -8,6 +8,21 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.1.1
+
+🐛 Fixed an issue where the `.cdiff` files were only downloaded when updating a
+`.cvd` and not when downloading the `.cvd` for the first time.
+
+🐛 Fixed an issue where `cvd update` crashes if the DNS query fails, rather
+than printing a helpful error message and exiting.
+
+🐛 Fixed support for CVD Update on Windows 🪟. In prior versions, the DNS query
+was failing if a DNS server was not specified manually. Now it will try to use
+OpenDNS servers if no DNS server is specified.
+
+➕ Added Python dependencies to the Readme to help users that are unable to
+install using `pip`.
+
 ## Version 1.1.0
 
 ➕ CVD-Update can now get the DNS nameserver IP from an environment variable.
