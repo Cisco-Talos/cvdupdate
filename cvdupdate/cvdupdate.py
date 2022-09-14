@@ -548,7 +548,12 @@ class CVDUpdate:
 
         if self.dns_version_tokens == []:
             # Query DNS if we haven't already
-            self._query_dns_txt_entry()
+            for _attempt in range(self.config['max retry']):
+                if self._query_dns_txt_entry():
+                    break
+                # Pause before next attempt.
+                time.sleep(0.1)
+
             if self.dns_version_tokens == []:
                 # Query failed. Bail out.
                 return version
