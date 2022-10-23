@@ -41,6 +41,20 @@ Install `cvdupdate` from PyPI:
 python3 -m pip install --user cvdupdate
 ```
 
+### Updating Your Installation
+
+When running `cvd update` to update the databases, it will also check if there is a new version of the `cvdupdate` package on Python's PyPI package repository. If there is a newer version of `cvdupdate`, you will see a message prompting you to upgrade. It will look someething like this:
+```
+WARNING You are running cvdupdate version: 1.1.0.
+WARNING There is a newer version on PyPI: 1.1.1. Please update!
+```
+
+To upgrade the `cvdupdate` package through PyPI, run:
+
+```bash
+python3 -m pip install --user --upgrade cvdupdate
+```
+
 ## Basic Usage
 
 Use the `--help` option with any `cvd` command to get help.
