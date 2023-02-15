@@ -1,0 +1,30 @@
+---
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+
+  - package-ecosystem: "pip"
+    directory: "/cvdupdate"
+    schedule:
+      interval: "weekly"
+      time: "09:00"
+      timezone: "Europe/Berlin"

@@ -1,0 +1,42 @@
+name: ci
+
+on: 
+  pull_request:
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker metadata action
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images:
+            cvdupdate-local
+          tags: |
+            type=raw,latest
+
+      - name: Build Dockerimage
+        id: docker_build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=docker,dest=/tmp/cvdupdate-local.tar
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Run Dockerimage
+        run: |
+          docker load --input /tmp/cvdupdate-local.tar
+          docker run -d --net=host cvdupdate-local serve
+          sleep 30
+          curl --fail --silent --output /dev/null http://localhost:8000/main.cvd
