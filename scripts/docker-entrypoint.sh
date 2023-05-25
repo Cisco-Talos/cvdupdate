@@ -5,6 +5,7 @@ echo "ClamAV Private Database Mirror Updater Cron ${SCRIPT_PATH}"
 if [ "${USER_ID}" -ne "0" ]; then
     echo "Creating user with ID ${USER_ID}"
     useradd --create-home --home-dir /cvdupdate --uid "${USER_ID}" cvdupdate
+    chown -R "${USER_ID}" /cvdupdate
     gosu cvdupdate cvdupdate config set --logdir /cvdupdate/logs
     gosu cvdupdate cvdupdate config set --dbdir /cvdupdate/database
 else
