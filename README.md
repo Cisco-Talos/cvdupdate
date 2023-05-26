@@ -283,6 +283,47 @@ You can test it by running `freshclam` or `freshclam.exe` locally, where you've 
 DatabaseMirror http://localhost:8000
 ```
 
+### Use docker
+
+Build docker image
+
+```bash
+docker build . --tag cvdupdate:latest
+```
+
+Run image, that will automaticly update databases in folder `/srv/cvdupdate` and write logs to `/var/log/cvdupdate`
+
+```bash
+docker run -d \
+  -v /srv/cvdupdate:/cvdupdate/database \
+  -v /var/log/cvdupdate:/cvdupdate/logs \
+  cvdupdate:latest
+```
+
+Run image, that will automaticly update databases in folder `/srv/cvdupdate`, write logs to `/var/log/cvdupdate` and set owner of files to user with ID 1000
+
+```bash
+docker run -d \
+  -v /srv/cvdupdate:/cvdupdate/database \
+  -v /var/log/cvdupdate:/cvdupdate/logs \
+  -e USER_ID=1000 \
+  cvdupdate:latest
+```
+
+Default update interval is `30 */4 * * *` (see [Cron Example](#cron-example))
+
+You may pass custom update interval in environment variable `CRON`
+
+For example - update every day in 00:00
+
+```bash
+docker run -d \
+  -v /srv/cvdupdate:/cvdupdate/database \
+  -v /var/log/cvdupdate:/cvdupdate/logs \
+  -e CRON='0 0 * * *' \
+  cvdupdate:latest
+  ```
+
 ## Contribute
 
 We'd love your help. There are many ways to contribute!
