@@ -283,7 +283,7 @@ You can test it by running `freshclam` or `freshclam.exe` locally, where you've 
 DatabaseMirror http://localhost:8000
 ```
 
-### Use docker
+## Use docker
 
 Build docker image
 
@@ -323,6 +323,36 @@ docker run -d \
   -e CRON='0 0 * * *' \
   cvdupdate:latest
   ```
+## Use Docker compose
+
+Edit the compose file if you need to change the default values:
+
+* Port 8000
+* USER_ID=0
+* CRON=30 */4 * * *
+
+### Build
+```
+docker compose build
+```
+
+### Start
+```
+docker compose up -d
+```
+
+### Stop
+```
+docker compose down
+```
+
+### Volumes
+Volumes are defined in the composefile and will be autocreated on `docker compose up`
+```
+DRIVER    VOLUME NAME
+local     cvdupdate_database
+local     cvdupdate_log
+```
 
 ## Contribute
 
