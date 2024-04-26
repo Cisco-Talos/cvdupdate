@@ -222,6 +222,7 @@ Familiarize yourself with the various commands using the `--help` option.
 cvd --help
 cvd config --help
 cvd update --help
+cvd add --help
 cvd clean --help
 ```
 
@@ -269,6 +270,20 @@ Have a look at the logs if you wish.
 ls ~/.cvdupdate/logs
 
 cat ~/.cvdupdate/logs/*
+```
+
+### Add an additional database
+
+Maybe add an additional database that is not part of the default set of databases.
+
+```bash
+cvd add linux.cvd https://database.clamav.net/linux.cvd
+```
+
+List out the databases again:
+
+```bash
+cvd list -V
 ```
 
 ### Serve it up, Test out FreshClam
