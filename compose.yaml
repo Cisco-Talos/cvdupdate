@@ -1,0 +1,18 @@
+services:
+  cvdupdate:
+    build: ./
+    hostname: cvdupdate
+    container_name: cvdupdate
+    image: cvdupdate:latest
+    ports:
+      - 8000:8000
+    environment:
+      - CRON=30 */4 * * *
+      - USER_ID=0
+    volumes:
+      - database:/cvdupdate/database
+      - log:/cvdupdate/logs
+
+volumes:
+  database:
+  log:
