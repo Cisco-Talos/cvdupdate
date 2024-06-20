@@ -1,9 +1,10 @@
 __pycache__
+.git
+.github
 .mypy_cache
 .pytest_cache
 .vscode
-cvdupdate.egg-info
+*cvdupdate.egg-info
 /build
 /dist
 /tests
-.github
