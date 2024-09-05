@@ -27,6 +27,7 @@ setuptools.setup(
         "requests",
         "dnspython>=2.1.0",
         "rangehttpserver",
+        "setuptools",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
