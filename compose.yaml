@@ -4,14 +4,19 @@ services:
     hostname: cvdupdate
     container_name: cvdupdate
     image: cvdupdate:latest
-    ports:
-      - 8000:8000
     environment:
       - CRON=30 */4 * * *
       - USER_ID=0
     volumes:
       - database:/cvdupdate/database
       - log:/cvdupdate/logs
+  ## Apache instance to serve the mirror
+  apache:
+    image: httpd:2.4
+    volumes:
+      - database:/usr/local/apache2/htdocs
+    ports:
+      - 8000:80
 
 volumes:
   database:
