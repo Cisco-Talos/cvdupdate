@@ -338,9 +338,13 @@ docker run -d \
   -e CRON='0 0 * * *' \
   cvdupdate:latest
   ```
-## Use Docker compose
+## Use Docker Compose
 
-Edit the compose file if you need to change the default values:
+A Docker `compose.yaml` is provided to:
+1. Regularly update a Docker volume with the latest ClamAV databases.
+2. Serve a database mirror on port 8000 using the Apache webserver. 
+
+Edit the `compose.yaml` file if you need to change the default values:
 
 * Port 8000
 * USER_ID=0
