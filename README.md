@@ -362,7 +362,7 @@ docker compose down
 ```
 
 ### Volumes
-Volumes are defined in the composefile and will be autocreated on `docker compose up`
+Volumes are defined in `compose.yaml` and will be auto-created when you run `docker compose up`
 ```
 DRIVER    VOLUME NAME
 local     cvdupdate_database
