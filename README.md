@@ -347,17 +347,17 @@ Edit the compose file if you need to change the default values:
 * CRON=30 */4 * * *
 
 ### Build
-```
+```bash
 docker compose build
 ```
 
 ### Start
-```
+```bash
 docker compose up -d
 ```
 
 ### Stop
-```
+```bash
 docker compose down
 ```
 
