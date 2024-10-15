@@ -8,20 +8,43 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.1.2
+
+➕ Added a Docker Compose file to make it easier to host a private mirror.
+  The Docker Compose environment runs two containers:
+  1. CVD-Update.
+  2. An Apache webserver to host the private mirror.
+
+  Improvement courtesy of Mark Petersen.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/61
+
+🐛 Fixed the CVD-Update Python package so it installs the `setuptools`
+  dependency. This fixes a runtime error on some systems.
+  Fix courtesy of Craig Andrews.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/59
+
+🐛 Added missing documentation for `cvd add` command to the Readme.
+  Fix courtesy of Kim Oliver Drechsel.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/58
+
+➕ Added retries in case the DNS TXT query fails.
+  Fix courtesy of backbord.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/50
+
 ## Version 1.1.1
 
 🐛 Fixed an issue where the `.cdiff` files were only downloaded when updating a
-`.cvd` and not when downloading the `.cvd` for the first time.
+  `.cvd` and not when downloading the `.cvd` for the first time.
 
 🐛 Fixed an issue where `cvd update` crashes if the DNS query fails, rather
-than printing a helpful error message and exiting.
+  than printing a helpful error message and exiting.
 
 🐛 Fixed support for CVD Update on Windows 🪟. In prior versions, the DNS query
-was failing if a DNS server was not specified manually. Now it will try to use
-OpenDNS servers if no DNS server is specified.
+  was failing if a DNS server was not specified manually. Now it will try to use
+  OpenDNS servers if no DNS server is specified.
 
 ➕ Added Python dependencies to the Readme to help users that are unable to
-install using `pip`.
+  install using `pip`.
 
 ## Version 1.1.0
 
