@@ -298,7 +298,7 @@ You can test it by running `freshclam` or `freshclam.exe` locally, where you've 
 DatabaseMirror http://localhost:8000
 ```
 
-### Use docker
+## Use docker
 
 Build docker image
 
@@ -338,6 +338,40 @@ docker run -d \
   -e CRON='0 0 * * *' \
   cvdupdate:latest
   ```
+## Use Docker Compose
+
+A Docker `compose.yaml` is provided to:
+1. Regularly update a Docker volume with the latest ClamAV databases.
+2. Serve a database mirror on port 8000 using the Apache webserver. 
+
+Edit the `compose.yaml` file if you need to change the default values:
+
+* Port 8000
+* USER_ID=0
+* CRON=30 */4 * * *
+
+### Build
+```bash
+docker compose build
+```
+
+### Start
+```bash
+docker compose up -d
+```
+
+### Stop
+```bash
+docker compose down
+```
+
+### Volumes
+Volumes are defined in `compose.yaml` and will be auto-created when you run `docker compose up`
+```
+DRIVER    VOLUME NAME
+local     cvdupdate_database
+local     cvdupdate_log
+```
 
 ## Contribute
 
