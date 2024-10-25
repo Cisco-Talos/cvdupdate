@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="cvdupdate",
-    version="1.1.1",
+    version="1.1.2",
     author="The ClamAV Team",
     author_email="clamav-bugs@external.cisco.com",
     copyright="Copyright (C) 2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.",
@@ -27,6 +27,7 @@ setuptools.setup(
         "requests",
         "dnspython>=2.1.0",
         "rangehttpserver",
+        "setuptools",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -222,6 +222,7 @@ Familiarize yourself with the various commands using the `--help` option.
 cvd --help
 cvd config --help
 cvd update --help
+cvd add --help
 cvd clean --help
 ```
 
@@ -271,6 +272,20 @@ ls ~/.cvdupdate/logs
 cat ~/.cvdupdate/logs/*
 ```
 
+### Add an additional database
+
+Maybe add an additional database that is not part of the default set of databases.
+
+```bash
+cvd add linux.cvd https://database.clamav.net/linux.cvd
+```
+
+List out the databases again:
+
+```bash
+cvd list -V
+```
+
 ### Serve it up, Test out FreshClam
 
 Test out your mirror with FreshClam on the same computer.
@@ -283,7 +298,7 @@ You can test it by running `freshclam` or `freshclam.exe` locally, where you've 
 DatabaseMirror http://localhost:8000
 ```
 
-### Use docker
+## Use docker
 
 Build docker image
 
