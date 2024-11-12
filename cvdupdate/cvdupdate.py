@@ -131,24 +131,12 @@ class CVDUpdate:
         """
         Initializes the logging parameters.
         """
-        self.logger = logging.getLogger(f"cvdupdate-{self.version}")
-
-        if self.verbose:
-            self.logger.setLevel(logging.DEBUG)
-        else:
-            self.logger.setLevel(logging.INFO)
-
-        formatter = logging.Formatter(
-            fmt="%(asctime)s - %(levelname)s:  %(message)s",
-            datefmt="%Y-%m-%d %I:%M:%S %p",
-        )
-
         today = datetime.datetime.now()
-        self.log_file = self.log_dir / f"{today.strftime('%Y-%m-%d')}.log"
+        log_file = self.log_dir / f"{today:%Y-%m-%d}.log"
 
         if not self.log_dir.exists():
             # Make a new log directory
-            os.makedirs(os.path.split(self.log_file)[0])
+            os.makedirs(log_file.parent)
         else:
             # Log dir already exists, lets check if we need to prune old logs
             logs = self.log_dir.glob('*.log')
@@ -159,11 +147,31 @@ class CVDUpdate:
                     # Log is too old, delete!
                     os.remove(str(log))
 
-        self.filehandler = logging.FileHandler(filename=self.log_file)
-        self.filehandler.setLevel(self.logger.level)
-        self.filehandler.setFormatter(formatter)
+        stderr_level = logging.WARNING
 
-        self.logger.addHandler(self.filehandler)
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(stderr_level)
+
+        class FilterNotStdErr(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return record.levelno < stderr_level
+
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.addFilter(FilterNotStdErr())
+
+        logging.basicConfig(
+            level=logging.DEBUG if self.verbose else logging.INFO,
+            format="%(asctime)s - %(levelname)s:  %(message)s",
+            datefmt="%Y-%m-%d %I:%M:%S %p",
+            force=True,  # an import might already have the root logger configured
+            handlers=[
+                stderr_handler,
+                stdout_handler,
+                logging.FileHandler(log_file),
+            ],
+        )
+
+        self.logger = logging.getLogger(f"cvdupdate-{self.version}")
 
         # Also set the log level for urllib3, because it's "DEBUG" by default,
         # and we may not like that.
