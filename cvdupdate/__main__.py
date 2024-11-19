@@ -31,16 +31,16 @@ limitations under the License.
 
 import logging
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import click
 import coloredlogs
+import importlib.metadata
 from http.server import HTTPServer
 from RangeHTTPServer import RangeRequestHandler
 
 from cvdupdate import auto_updater
-import pkg_resources
 from cvdupdate.cvdupdate import CVDUpdate
 
 logging.basicConfig()
@@ -58,7 +58,7 @@ from colorama import Fore, Back, Style
     + __doc__ + "\n"
     + Fore.GREEN
     + _description + "\n"
-    + f"\nVersion {pkg_resources.get_distribution('cvdupdate').version}\n"
+    + f"\nVersion {importlib.metadata.version('cvdupdate')}\n"
     + Style.RESET_ALL
     + _copyright,
 )
