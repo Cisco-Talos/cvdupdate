@@ -17,26 +17,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pathlib import Path
 import copy
 import datetime
-from enum import Enum
+import http.client as http_client
 import json
 import logging
 import os
 import platform
-import pkg_resources
 import re
 import subprocess
 import sys
 import time
-from typing import *
 import uuid
-import http.client as http_client
+from enum import Enum
+from pathlib import Path
+from typing import *
 
-from dns import resolver
+import importlib.metadata
 import requests
-from requests import status_codes
+from dns import resolver
+from packaging import version
+from requests import status_codes  # Often redundant if you're already using `requests.*`
 
 class CvdStatus(Enum):
     NO_UPDATE = 0
@@ -117,7 +118,7 @@ class CVDUpdate:
             db_dir:         path where databases will be downloaded.
             verbose:        Enable DEBUG-level logs and other verbose messages.
         """
-        self.version = pkg_resources.get_distribution('cvdupdate').version
+        self.version = importlib.metadata.version('cvdupdate')
         self.verbose = verbose
         self._read_config(
             config,
@@ -897,33 +898,37 @@ class CVDUpdate:
 
     def pypi_update_check(self):
         def check(name):
-            '''
-            Check if there's a newer version of the cvdupdate package.
-            From https://stackoverflow.com/questions/58648739/how-to-check-if-python-package-is-latest-version-programmatically
-            '''
-            self.logger.debug(f'Checking for a newer version of cvdupdate.')
+            """Checks if a newer version of the specified module is available on PyPI."""
+            self.logger.debug(f'Checking for a newer version of {name}.')
+            try:
+                current_version_str = importlib.metadata.version(name)
+                current_version = version.parse(current_version_str)
 
-            result = subprocess.run([sys.executable, '-m', 'pip', 'install', '{}==random'.format('cvdupdate')], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            latest_version = result.stderr.decode("utf-8")
-            latest_version = latest_version[latest_version.find('(from versions:')+15:]
-            latest_version = latest_version[:latest_version.find(')')]
-            latest_version = latest_version.replace(' ','').split(',')[-1].strip()
+                response = requests.get(f"https://pypi.org/pypi/{name}/json")  # Get package info
+                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                latest_version_str = response.json()["info"]["version"]
+                latest_version = version.parse(latest_version_str)
 
-            result = subprocess.run([sys.executable, '-m', 'pip', 'show', '{}'.format('cvdupdate')], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            current_version = result.stdout.decode("utf-8")
-            current_version = current_version[current_version.find('Version:')+8:]
-            current_version = current_version[:current_version.find('\n')].replace(' ','').strip()
+                if latest_version > current_version:
+                    self.logger.warning(f'You are running {name} version: {current_version}.')
+                    self.logger.warning(f'There is a newer version on PyPI: {latest_version}. Please update!')
+                    return False  # Newer version available
 
-            if 'ERROR' in latest_version:
-                self.logger.debug(f"Version check didn't work, didn't get back a list of package versions.")
-                return True
-            elif latest_version == current_version:
-                self.logger.debug(f'cvdupdate is up-to-date: {current_version}.')
-                return True
-            else:
-                self.logger.warning(f'You are running cvdupdate version: {current_version}.')
-                self.logger.warning(f'There is a newer version on PyPI: {latest_version}. Please update!')
-                return False
+                else:
+                    self.logger.debug(f'{name} is up-to-date: {current_version}.')
+                    return True  # No newer version
+
+            except requests.exceptions.RequestException as e:
+                self.logger.debug(f"Version check failed: {e}")  # Log the error
+                return True  # Assume up-to-date on error
+
+            except importlib.metadata.PackageNotFoundError:
+                self.logger.error(f"Package {name} not found locally.")
+                return True  # Assuming not found means no update possible
+
+            except Exception as e:  # Catch other potential errors (json parsing etc.)
+                self.logger.debug(f"Version check failed: {e}")
+                return True  # Assume up-to-date on error
 
         return check('cvdupdate')
 
