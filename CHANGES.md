@@ -8,6 +8,16 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.1.3
+
+🐛 Fixed CVD-Update version check in PyPI package repository on startup.
+  Work courtesy of Steve Mays.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/67
+
+🌌 Info-level and Debug-level messages will now go to stdout instead of stderr.
+  Work courtesy of GitHub user backbord.
+  - GitHub Pull-Request: https://github.com/Cisco-Talos/cvdupdate/pull/65
+
 ## Version 1.1.2
 
 ➕ Added a Docker Compose file to make it easier to host a private mirror.
