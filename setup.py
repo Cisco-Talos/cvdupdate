@@ -22,7 +22,7 @@ setuptools.setup(
     },
     install_requires=[
         "click>=7.0",
-        "coloredlogs>=10.0",
+        "colorlog>=6.7",
         "colorama",
         "requests",
         "dnspython>=2.1.0",
