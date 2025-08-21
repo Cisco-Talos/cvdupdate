@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 import click
-import coloredlogs
+import colorlog
 import importlib.metadata
 from http.server import HTTPServer
 from RangeHTTPServer import RangeRequestHandler
@@ -43,9 +43,14 @@ from RangeHTTPServer import RangeRequestHandler
 from cvdupdate import auto_updater
 from cvdupdate.cvdupdate import CVDUpdate
 
-logging.basicConfig()
+handler = colorlog.StreamHandler()
+handler.setFormatter(
+    colorlog.ColoredFormatter(
+        "%(log_color)s%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
+)
+logging.basicConfig(level=logging.DEBUG, handlers=[handler])
 module_logger = logging.getLogger("cvdupdate")
-coloredlogs.install(level="DEBUG", fmt="%(asctime)s %(name)s %(levelname)s %(message)s")
 module_logger.setLevel(logging.DEBUG)
 
 from colorama import Fore, Back, Style

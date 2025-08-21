@@ -34,10 +34,27 @@ from pathlib import Path
 from typing import *
 
 import importlib.metadata
-import requests
-from dns import resolver
+try:
+    import requests
+except ModuleNotFoundError:
+    class _RequestsMissing:
+        def __getattr__(self, name):
+            raise ModuleNotFoundError(
+                "The 'requests' package is required to perform network operations. "
+                "Install it with 'pip install requests'."
+            )
+    requests = _RequestsMissing()
+try:
+    from dns import resolver
+except ModuleNotFoundError:
+    class _DNSMissing:
+        def __getattr__(self, name):
+            raise ModuleNotFoundError(
+                "The 'dnspython' package is required for DNS lookups. "
+                "Install it with 'pip install dnspython'."
+            )
+    resolver = _DNSMissing()
 from packaging import version
-from requests import status_codes  # Often redundant if you're already using `requests.*`
 
 class CvdStatus(Enum):
     NO_UPDATE = 0
@@ -118,7 +135,10 @@ class CVDUpdate:
             db_dir:         path where databases will be downloaded.
             verbose:        Enable DEBUG-level logs and other verbose messages.
         """
-        self.version = importlib.metadata.version('cvdupdate')
+        try:
+            self.version = importlib.metadata.version('cvdupdate')
+        except importlib.metadata.PackageNotFoundError:
+            self.version = "0.0"
         self.verbose = verbose
         self._read_config(
             config,
