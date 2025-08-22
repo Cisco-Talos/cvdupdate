@@ -33,7 +33,10 @@ from enum import Enum
 from pathlib import Path
 from typing import *
 
-import importlib.metadata
+try:
+    from importlib.metadata import PackageNotFoundError, version as _get_version
+except ImportError:  # pragma: no cover - backport for older Pythons
+    from importlib_metadata import PackageNotFoundError, version as _get_version
 try:
     import requests
 except ModuleNotFoundError:
@@ -136,8 +139,8 @@ class CVDUpdate:
             verbose:        Enable DEBUG-level logs and other verbose messages.
         """
         try:
-            self.version = importlib.metadata.version('cvdupdate')
-        except importlib.metadata.PackageNotFoundError:
+            self.version = _get_version('cvdupdate')
+        except PackageNotFoundError:
             self.version = "0.0"
         self.verbose = verbose
         self._read_config(
@@ -1076,7 +1079,7 @@ class CVDUpdate:
             """Checks if a newer version of the specified module is available on PyPI."""
             self.logger.debug(f'Checking for a newer version of {name}.')
             try:
-                current_version_str = importlib.metadata.version(name)
+                current_version_str = _get_version(name)
                 current_version = version.parse(current_version_str)
 
                 response = requests.get(f"https://pypi.org/pypi/{name}/json")  # Get package info
@@ -1097,7 +1100,7 @@ class CVDUpdate:
                 self.logger.debug(f"Version check failed: {e}")  # Log the error
                 return True  # Assume up-to-date on error
 
-            except importlib.metadata.PackageNotFoundError:
+            except PackageNotFoundError:
                 self.logger.error(f"Package {name} not found locally.")
                 return True  # Assuming not found means no update possible
 
