@@ -338,6 +338,11 @@ class CVDUpdate:
                 try:
                     self.logger.info(f"Deleting: {db}")
                     os.remove(str(cvddb))
+
+                    # If there is a matching .sign digital signature file, remove it too
+                    if os.path.exists(str(cvddb) + ".sign"):
+                        os.remove(str(cvddb) + ".sign")
+
                 except Exception as exc:
                     self.logger.debug(f"Tried to remove {db}")
                     raise exc
@@ -348,8 +353,13 @@ class CVDUpdate:
             try:
                 self.logger.info(f"Deleting CDIFF: {cdiff.name}")
                 os.remove(str(cdiff))
+
+                # If there is a matching .sign digital signature file, remove it too
+                if os.path.exists(str(cdiff) + ".sign"):
+                    os.remove(str(cdiff) + ".sign")
+
             except Exception as exc:
-                self.logger.debug(f"Tried to remove cdiffs.")
+                self.logger.debug(f"Tried to remove CDIFFs.")
 
         # Config cleanup
         for db in dbs:
@@ -390,8 +400,8 @@ class CVDUpdate:
 
         db_paths = self.db_dir.glob('*')
         for db in db_paths:
-            if db.name.endswith('.cdiff'):
-                # Ignore CDIFFs, they'll get printed later.
+            if db.name.endswith('.cdiff') or db.name.endswith('.sign'):
+                # Ignore CDIFFs and sign files, they'll get printed later.
                 continue
 
             if db.name not in dbs:
@@ -615,13 +625,14 @@ class CVDUpdate:
         Return 0  if failed.
         '''
         version = 0
-        retry = 0
         url = self.state['dbs'][db]['url']
 
         self.logger.debug(f"Checking {db} version via HTTP download of CVD header.")
 
-        ims = datetime.datetime.utcfromtimestamp(self.state['dbs'][db]['last modified']).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        ims = datetime.datetime.fromtimestamp(self.state['dbs'][db]['last modified'], tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
+        retry = 0
+        response = None
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
@@ -638,6 +649,9 @@ class CVDUpdate:
                 retry += 1
             else:
                 break
+        if response is None:
+            self.logger.error(f"No response received requesting CVD header from {url}.")
+            return 0
 
         if response.status_code == 200 or response.status_code == 206:
             # Looks like we downloaded something...
@@ -687,9 +701,10 @@ class CVDUpdate:
         Will use If-Modified-Since
         If Not-Modified, it will not replace the current database.
         '''
-        retry = 0
-        ims: str = datetime.datetime.utcfromtimestamp(last_modified).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
+        retry = 0
+        response = None
         while retry < self.config['max retry']:
             response = requests.get(url, headers = {
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
@@ -705,6 +720,9 @@ class CVDUpdate:
                 retry += 1
             else:
                 break
+        if response is None:
+            self.logger.error(f"No response received requesting {url}.")
+            return CvdStatus.ERROR
 
         if response.status_code == 200:
             # Looks like we downloaded something...
@@ -760,6 +778,190 @@ class CVDUpdate:
             self.logger.error(f"Failed to download {db} from {url}")
             return CvdStatus.ERROR
 
+        # Now try downloading the corresponding .cvd.sign.
+        # It's okay if it doesn't exist
+        self._download_sign_file_for(
+            db,
+            url,
+            last_modified=0,
+            version=version)
+
+        return CvdStatus.UPDATED
+
+    def _download_cdiff(self, db: str, file: str, db_url: str, last_modified: int, desired_version: int, available_version: int) -> CvdStatus:
+        '''
+        Download a CDIFF file given a file name and version.
+        The file name should be in the format of "daily-12345.cdiff"
+        '''
+
+        self.logger.debug(f"Checking for {file}")
+
+        # now remove the old file name from the db_url and add the new sign file name
+        base_url = db_url.rsplit('/', 1)[0]
+        url = f"{base_url}/{file}"
+
+        retry = 0
+        response = None
+        while retry < self.config['max retry']:
+            response = requests.get(url, headers = {
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
+            })
+
+            if ((response.status_code == 200 or response.status_code == 206) and
+                ('content-length' in response.headers) and
+                (int(response.headers['content-length']) > len(response.content))):
+                self.logger.warning(f"Response was truncated somehow...")
+                self.logger.warning(f"   Expected {response.headers['content-length']}")
+                self.logger.warning(f"   Received {response.content}, let's retry.")
+                retry += 1
+            else:
+                break
+        if response is None:
+            self.logger.error(f"No response received requesting {url}.")
+            return CvdStatus.ERROR
+
+        if response.status_code == 200:
+            # Looks like we downloaded something...
+            if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
+                self.logger.error(f"Failed to download CDIFF.")
+                return CvdStatus.ERROR
+
+            # Download Success
+            self.logger.info(f"Downloaded {file}")
+            try:
+                with (self.db_dir / f"{file}").open('wb') as new_db:
+                    new_db.write(response.content)
+            except Exception as exc:
+                self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+                self.logger.error(f"Failed to save {file} to {self.db_dir}.")
+
+            # Update config with CDIFF, for posterity
+            self.state['dbs'][db]['CDIFFs'].append(file)
+
+            # Prune old CDIFFs if needed
+            if len(self.state['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
+                try:
+                    os.remove(self.db_dir / self.state['dbs'][db]['CDIFFs'][0])
+                except Exception as exc:
+                    self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+                    self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
+
+                self.state['dbs'][db]['CDIFFs'] = self.state['dbs'][db]['CDIFFs'][1:]
+
+        elif response.status_code == 429:
+            # Rejected because downloading the same file too frequently.
+            self.logger.warning(f"Failed to download {file}")
+            self.logger.warning(f"Download request rejected because we've downloaded the same file too frequently.")
+
+            try_again_seconds = 60 * 60 * 12 # 12 hours
+            if 'Retry-After' in response.headers.keys():
+                try_again_seconds = int(response.headers['Retry-After'])
+
+            self.state['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
+
+            try_again_string = str(datetime.timedelta(seconds=try_again_seconds))
+            self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
+
+            # Sure only a CDIFF failed, but if we want any chance of trying the CDIFF again
+            # in the future, let's bail out now and retry the CVD + CDIFFs after the cooldown.
+            return CvdStatus.ERROR
+
+        else:
+            # HTTP Get failed.
+            self.logger.info(f"No CDIFF found for {db} version # {desired_version}")
+
+            if desired_version < available_version:
+                desired_version = available_version - 1
+                self.logger.info(f"Will just skip to the last CDIFF instead.")
+            else:
+                self.logger.info(f"Giving up on CDIFFs for {db}")
+                return CvdStatus.NO_UPDATE
+
+        return CvdStatus.UPDATED
+
+
+    def _download_sign_file_for(self, file: str, file_url: str, last_modified: int, version=0) -> CvdStatus:
+        '''
+        Download signature file given a file name.
+        If version > 0, will ensure sign file includes version in the filename, like this:
+        - file-version.ext.sign
+        '''
+        ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
+
+        sign_file = file + ".sign"
+        if version > 0 and str(version) not in file:
+            # the sign file name should include the version in this format: "file-version.ext.sign"
+            # reconstruct.
+            name_parts = file.rsplit('.', 1)
+            if len(name_parts) == 1:
+                self.logger.error(f"Invalid file name. Lacks extension: {file}")
+                return CvdStatus.ERROR
+
+            file_name = name_parts[0]
+            ext = name_parts[-1]
+            sign_file = f"{file_name}-{version}.{ext}.sign"
+
+        # now remove the old file name from the file_url and add the new sign file name
+        base_url = file_url.rsplit('/', 1)[0]
+        url = f"{base_url}/{sign_file}"
+
+        retry = 0
+        response = None
+        while retry < self.config['max retry']:
+            response = requests.get(url, headers = {
+                'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
+                'If-Modified-Since': ims,
+            })
+
+            if ((response.status_code == 200 or response.status_code == 206) and
+                ('content-length' in response.headers) and
+                (int(response.headers['content-length']) > len(response.content))):
+                self.logger.warning(f"Response was truncated somehow...")
+                self.logger.warning(f"   Expected {response.headers['content-length']}")
+                self.logger.warning(f"   Received {response.content}, let's retry.")
+                retry += 1
+            else:
+                break
+        if response is None:
+            self.logger.error(f"No response received requesting {url}.")
+            return CvdStatus.ERROR
+
+        if response.status_code == 200:
+            # Looks like we downloaded something...
+            if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
+                self.logger.error(f"Failed to download {sign_file}")
+                return CvdStatus.ERROR
+
+            # Download Success
+            if version > 0:
+                self.logger.info(f"Downloaded {sign_file}. Version: {version}")
+            else:
+                self.logger.info(f"Downloaded {sign_file}")
+
+            try:
+                with (self.db_dir / sign_file).open('wb') as new_db:
+                    new_db.write(response.content)
+
+            except Exception as exc:
+                self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+                self.logger.error(f"Failed to save {sign_file} to {self.db_dir}")
+                return CvdStatus.ERROR
+
+        elif response.status_code == 304:
+            # Not modified since IMS. We have the latest version.
+            self.logger.info(f"{sign_file} not-modified since: {ims} (local version {version})")
+            return CvdStatus.NO_UPDATE
+
+        elif response.status_code == 429:
+            # Rejected because downloading the same file too frequently.
+            self.logger.warning(f"Failed to download {sign_file} from {url} with 429 response.")
+            return CvdStatus.ERROR
+
+        else:
+            # HTTP Get failed.
+            self.logger.info(f"Request failed for {url}. Probably no external digital signature provided for {file}")
+            return CvdStatus.ERROR
+
         return CvdStatus.UPDATED
 
     def _download_cvd(self, db: str, available_version: int) -> CvdStatus:
@@ -783,96 +985,41 @@ class CVDUpdate:
         # First try to get CDIFFs
         self.logger.debug(f"Downloading CDIFFs first...")
         while desired_version <= available_version:
-            # Attempt to download each CDIFF betwen our local version and the available version
+            # Attempt to download each CDIFF between our local version and the available version.
             # The url for CVDs should be https://database.clamav.net/<db>
             # Eg:
             #   https://database.clamav.net/daily.cvd
-            # For the daily cdiffs, we would want:
+            # For the daily CDIFFs, we would want:
             #   https://database.clamav.net/daily-<version>.cdiff
-            retry = 0
-            cdiff_filename = f"{db[:-len('.cvd')]}-{desired_version}.cdiff"
+            cdiff_file = f"{db[:-len('.cvd')]}-{desired_version}.cdiff"
 
-            original_url = self.state['dbs'][db]['url']
-            url = f"{original_url[:-len(db)]}{cdiff_filename}"
-
-            if (self.db_dir / cdiff_filename).exists():
-                self.logger.debug(f"We already have {cdiff_filename}. Skipping...")
+            if (self.db_dir / cdiff_file).exists():
+                self.logger.debug(f"We already have {cdiff_file}. Skipping...")
                 desired_version += 1
                 continue
 
-            self.logger.debug(f"Checking for {cdiff_filename}")
+            db_url = self.state['dbs'][db]['url']
 
-            while retry < self.config['max retry']:
-                response = requests.get(url, headers = {
-                    'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
-                })
+            # Download the .cdiff
+            result = self._download_cdiff(
+                db,
+                cdiff_file,
+                db_url,
+                last_modified=0,
+                desired_version=desired_version,
+                available_version=available_version)
 
-                if ((response.status_code == 200 or response.status_code == 206) and
-                    ('content-length' in response.headers) and
-                    (int(response.headers['content-length']) > len(response.content))):
-                    self.logger.warning(f"Response was truncated somehow...")
-                    self.logger.warning(f"   Expected {response.headers['content-length']}")
-                    self.logger.warning(f"   Received {response.content}, let's retry.")
-                    retry += 1
-                else:
-                    break
+            if result != CvdStatus.UPDATED:
+                self.logger.error(f"Failed to download {cdiff_file}.")
+                break
 
-            if response.status_code == 200:
-                # Looks like we downloaded something...
-                if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
-                    self.logger.error(f"Failed to download {db} header to check the version #.")
-                    return CvdStatus.ERROR
-
-                # Download Success
-                self.logger.info(f"Downloaded {cdiff_filename}")
-                try:
-                    with (self.db_dir / f"{cdiff_filename}").open('wb') as new_db:
-                        new_db.write(response.content)
-                except Exception as exc:
-                    self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
-                    self.logger.error(f"Failed to save {cdiff_filename} to {self.db_dir}.")
-
-                # Update config with CDIFF, for posterity
-                self.state['dbs'][db]['CDIFFs'].append(cdiff_filename)
-
-                # Prune old CDIFFs if needed
-                if len(self.state['dbs'][db]['CDIFFs']) > self.config['# cdiffs to keep']:
-                    try:
-                        os.remove(self.db_dir / self.state['dbs'][db]['CDIFFs'][0])
-                    except Exception as exc:
-                        self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
-                        self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
-
-                    self.state['dbs'][db]['CDIFFs'] = self.state['dbs'][db]['CDIFFs'][1:]
-
-            elif response.status_code == 429:
-                # Rejected because downloading the same file too frequently.
-                self.logger.warning(f"Failed to download {cdiff_filename}")
-                self.logger.warning(f"Download request rejected because we've downloaded the same file too frequently.")
-
-                try_again_seconds = 60 * 60 * 12 # 12 hours
-                if 'Retry-After' in response.headers.keys():
-                    try_again_seconds = int(response.headers['Retry-After'])
-
-                self.state['dbs'][db]['retry after'] = time.time() + float(try_again_seconds)
-
-                try_again_string = str(datetime.timedelta(seconds=try_again_seconds))
-                self.logger.warning(f"We won't try {db} again for {try_again_string} hours.")
-
-                # Sure only a CDIFF failed, but if we want any chance of trying the CDIFF again
-                # in the future, let's bail out now and retry the CVD + CDIFFs after the cooldown.
-                return CvdStatus.ERROR
-
-            else:
-                # HTTP Get failed.
-                self.logger.info(f"No CDIFF found for {db} version # {desired_version}")
-
-                if desired_version < available_version:
-                    desired_version = available_version - 1
-                    self.logger.info(f"Will just skip to the last CDIFF instead.")
-                else:
-                    self.logger.info(f"Giving up on CDIFFs for {db}")
-                    break
+            # Now try downloading the corresponding .cdiff.sign.
+            # It's okay if it doesn't exist.
+            self._download_sign_file_for(
+                cdiff_file,
+                db_url,
+                last_modified=0,
+                version=desired_version)
 
             desired_version += 1
 
