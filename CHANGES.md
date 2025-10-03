@@ -8,6 +8,11 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Unreleased
+
+🐛 Replaced deprecated `pkg_resources` usage with `importlib.metadata` to avoid
+  deprecation warnings on Python 3.12+.
+
 ## Version 1.1.3
 
 🐛 Fixed CVD-Update version check in PyPI package repository on startup.

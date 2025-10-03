@@ -36,7 +36,10 @@ from pathlib import Path
 
 import click
 import colorlog
-import importlib.metadata
+try:
+    from importlib.metadata import PackageNotFoundError, version as _get_version
+except ImportError:  # pragma: no cover - backport for older Pythons
+    from importlib_metadata import PackageNotFoundError, version as _get_version
 from http.server import HTTPServer
 from RangeHTTPServer import RangeRequestHandler
 
@@ -55,6 +58,13 @@ module_logger.setLevel(logging.DEBUG)
 
 from colorama import Fore, Back, Style
 
+
+def _package_version() -> str:
+    try:
+        return _get_version('cvdupdate')
+    except PackageNotFoundError:
+        return '0.0'
+
 #
 # CLI Interface
 #
@@ -63,7 +73,7 @@ from colorama import Fore, Back, Style
     + __doc__ + "\n"
     + Fore.GREEN
     + _description + "\n"
-    + f"\nVersion {importlib.metadata.version('cvdupdate')}\n"
+    + f"\nVersion {_package_version()}\n"
     + Style.RESET_ALL
     + _copyright,
 )
