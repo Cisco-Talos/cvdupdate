@@ -1,5 +1,5 @@
 """
-Copyright (C) 2021-2022 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
+Copyright (C) 2021-2025 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
 
 This module provides a tool to download and update clamav databases and database
 patch files (CDIFFs) for the purposes of hosting your own database mirror.
@@ -757,6 +757,15 @@ class CVDUpdate:
             # Not modified since IMS. We have the latest version.
             version = self.state['dbs'][db]['local version']
             self.logger.info(f"{db} not-modified since: {ims} (local version {version})")
+
+            # Check for .cvd.sign.
+            # it won't download if we already have it.
+            self._download_sign_file_for(
+                db,
+                url,
+                last_modified=0,
+                version=version)
+
             return CvdStatus.NO_UPDATE
 
         elif response.status_code == 429:
@@ -904,6 +913,11 @@ class CVDUpdate:
             ext = name_parts[-1]
             sign_file = f"{file_name}-{version}.{ext}.sign"
 
+        # check if we already have it.
+        if (self.db_dir / sign_file).exists():
+            self.logger.debug(f"We already have {sign_file}. Skipping...")
+            return CvdStatus.NO_UPDATE
+
         # now remove the old file name from the file_url and add the new sign file name
         base_url = file_url.rsplit('/', 1)[0]
         url = f"{base_url}/{sign_file}"
@@ -979,6 +993,17 @@ class CVDUpdate:
         if local_version >= available_version:
             # Oh! We're already up to date, don't worry about it.
             self.logger.info(f"{db} is up-to-date. Version: {local_version}")
+
+            db_url = self.state['dbs'][db]['url']
+
+            # Check for the .cvd.sign file, just in case we don't have that yet.
+            # It won't download if we already have it.
+            self._download_sign_file_for(
+                db,
+                db_url,
+                last_modified=0,
+                version=available_version)
+
             return CvdStatus.NO_UPDATE
 
         elif local_version == 0:
