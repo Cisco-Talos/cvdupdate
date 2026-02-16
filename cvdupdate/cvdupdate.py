@@ -521,15 +521,17 @@ class CVDUpdate:
         self.logger.debug(f"Checking available versions via DNS TXT entry query of current.cvd.clamav.net")
 
         try:
-            our_resolver = resolver.Resolver()
-            our_resolver.timeout = 5 # Explicitly setting query timeout to mitigate https://github.com/Cisco-Talos/cvdupdate/issues/17
             nameservers = self._get_nameserver_configuration()
 
             if nameservers:
+                our_resolver = resolver.Resolver(configure=False)
                 our_resolver.nameservers = nameservers
                 self.logger.info(f"Using nameservers: {nameservers}")
             else:
+                our_resolver = resolver.Resolver()
                 self.logger.info("Using system configured nameservers")
+
+            our_resolver.timeout = 5 # Explicitly setting query timeout to mitigate https://github.com/Cisco-Talos/cvdupdate/issues/17
 
             answer = str(our_resolver.resolve("current.cvd.clamav.net","TXT").response.answer[0])
             versions = re.search('".*"', answer).group().strip('"')
