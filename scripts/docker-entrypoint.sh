@@ -19,13 +19,13 @@ if [ $# -eq 0 ]; then
 
     echo "Adding crontab entry"
     if [ "${USER_ID}" -ne "0" ]; then
-        crontab -l | {
+        {
             cat
             echo "${CRON:-"30 */4 * * *"} /usr/sbin/gosu cvdupdate /usr/local/bin/cvdupdate update >/proc/1/fd/1 2>/proc/1/fd/2"
             echo "@reboot /usr/sbin/gosu cvdupdate /usr/local/bin/cvdupdate update >/proc/1/fd/1 2>/proc/1/fd/2"
         } | crontab -
     else
-        crontab -l | {
+        {
             cat
             echo "${CRON:-"30 */4 * * *"} /usr/local/bin/cvdupdate update >/proc/1/fd/1 2>/proc/1/fd/2"
             echo "@reboot /usr/local/bin/cvdupdate update >/proc/1/fd/1 2>/proc/1/fd/2"
