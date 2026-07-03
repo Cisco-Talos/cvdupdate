@@ -10,6 +10,31 @@
 
 ## Version 1.3.0
 
+- ➕ Added authenticated proxy support. Proxy settings can be provided through
+  environment variables (`CVDUPDATE_PROXY_URL`, `CVDUPDATE_PROXY_USER`,
+  `CVDUPDATE_PROXY_PASS`) or with `cvd config set` (`--proxy-url`,
+  `--proxy-user`, `--proxy-pass`). Credentials are embedded in the proxy URL so
+  the `Proxy-Authorization` header is sent, and they are redacted from logs and
+  from `cvd config show`. Feature courtesy of Nik Kale.
+
+  Closes #7, #9.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/81)
+
+- ➕ Added a `cvd health` command that reports the health and currency of
+  downloaded databases, including per-database version comparison, file age,
+  and cooldown state. Pass `--json` for machine-readable output and `--check`
+  for a non-zero exit code when databases are not healthy, for scripted health
+  checks. Feature courtesy of Nik Kale.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/81)
+
+- ➕ Added a `cvd metrics` command that outputs database status as
+  Prometheus-format metrics, either once to stdout or from a persistent HTTP
+  server with `--serve` for scraping. Feature courtesy of Nik Kale.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/81)
+
 - ➕ Added a `cvd status` command (alias `s`) that reports the status of all
   databases, or of a single database when given a name. Pass `--json` for
   machine-readable output. The `cvd list` command (alias `ls`) now prints just

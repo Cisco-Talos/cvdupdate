@@ -184,9 +184,45 @@ export https_proxy
 cvd update -V
 ```
 
-> _Disclaimer_: CVD-Update doesn't support proxies that require authentication at this time. If your network admin allows it, you may be able to work around it by updating your proxy to allow HTTP requests through unauthenticated if the User-Agent matches your specific CVD-Update user agent. The CVD-Update User-Agent follows the form `CVDUPDATE/<version> (<uuid>)` where the `uuid` is unique to your installation and can be found in the `~/.cvdupdate/state.json` file (or `~/.cvdupdate/config.json` for cvdupdate <=1.0.2). See https://github.com/Cisco-Talos/cvdupdate/issues/9 for more details.
->
-> Adding support for proxy authentication is a ripe opportunity for a community contribution to the project.
+### Using an authenticated proxy
+
+For proxies that require authentication, CVD-Update accepts proxy credentials
+through environment variables or the config file. Credentials are embedded in
+the proxy URL so the `Proxy-Authorization` header is sent, and they are redacted
+from logs and from `cvd config show`.
+
+Using environment variables:
+
+```bash
+CVDUPDATE_PROXY_URL="http://proxy.example.com:8080" \
+CVDUPDATE_PROXY_USER="myuser" \
+CVDUPDATE_PROXY_PASS="mypassword" \
+cvd update -V
+```
+
+Or store them in the config file:
+
+```bash
+cvd config set --proxy-url http://proxy.example.com:8080
+cvd config set --proxy-user myuser
+cvd config set --proxy-pass         # prompts for the password
+```
+
+Environment variables take precedence over config file settings, and special
+characters in credentials are URL-encoded automatically.
+
+> _Security note_: credentials passed with `--proxy-user`/`--proxy-pass` are
+> stored **in plaintext** in `config.json` (the file is created with `0600`
+> permissions, i.e. readable only by your user). If you would rather not persist
+> the password to disk, provide the `CVDUPDATE_PROXY_*` environment variables at
+> runtime instead. Avoid `cvd update -D` (debug mode) when a proxy is
+> configured: it prints raw HTTP headers, including the `Proxy-Authorization`
+> credentials, to stdout.
+
+> _Note_: the proxy only carries CVD-Update's HTTP traffic. CVD-Update still
+> resolves database versions over DNS first, so the DNS server must remain
+> reachable (see [Using a proxy](#using-a-proxy) for the `--nameservers`
+> workaround on networks that block outbound DNS).
 
 ## Files and directories created by CVD-Update
 
@@ -235,6 +271,27 @@ cvd status daily.cvd
 
 > _Note_: `status` replaces the old `show` command. `show` still works as a deprecated alias and will be removed in a future release. Add `--json` to `status` (and `list`) for machine-readable output.
 
+Check the health and currency of downloaded databases. This compares the local
+version against the version advertised over DNS and reports each database as
+current, behind, unknown, or missing, along with file age and cooldown state.
+
+```bash
+cvd health
+cvd health --json           # machine-readable output
+cvd health --check          # non-zero exit code when not healthy (for scripts)
+```
+
+The `--check` exit codes are `0` (healthy), `1` (warning), and `2` (critical),
+which makes `cvd health --check` convenient for cron jobs and monitoring hooks.
+
+Export database status as Prometheus metrics, either once to stdout or from a
+persistent HTTP server for scraping.
+
+```bash
+cvd metrics                 # print metrics once to stdout
+cvd metrics --serve         # serve metrics at http://127.0.0.1:9090/metrics
+```
+
 Print out the config to see what it looks like.
 
 ```bash
@@ -278,6 +335,9 @@ cvd config show --json         # current configuration
 | `--dbs-directory`, `-d` | Database directory path (your HTTP server's `www` root). |
 | `--cdiffs-rotate` / `--no-cdiffs-rotate` | Rotate (delete) old CDIFF files (default: on). |
 | `--cdiffs-to-keep` | Number of CDIFFs to keep per database when rotating (default `30`). |
+| `--proxy-url` | Proxy URL, e.g. `http://proxy.example.com:8080` (see [Using an authenticated proxy](#using-an-authenticated-proxy)). |
+| `--proxy-user` | Proxy username. |
+| `--proxy-pass` | Proxy password; pass the flag with no value to be prompted. Stored in plaintext (`config.json`, mode `0600`). |
 | `--state-file` | Path to the state file (stores versions, UUID, and per-database metadata). |
 
 ```bash
