@@ -1,10 +1,12 @@
 import json
 import datetime
+import socket
 from pathlib import Path
+from typing import Any
 
 from tests.fixtures.revert import revert_homedir
 
-from cvdupdate.cvdupdate import CVDUpdate
+from cvdupdate.cvdupdate import CVDUpdate, CvdStatus
 
 def test_instantiation(revert_homedir):
     c = CVDUpdate()
@@ -156,3 +158,155 @@ def test_v1_config_migrates_successfully(revert_homedir):
     with Path(disk_config['state_file']).open() as f:
         disk_state = json.load(f)
     assert disk_state == a.state
+
+
+def test_sign_download_uses_origin_name_for_url_and_local_name_for_file(revert_homedir, tmp_path, monkeypatch):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+    )
+
+    called = {}
+
+    class FakeResponse:
+        status_code = 200
+        content = b'sigdata'
+        headers = {'content-length': str(len(content))}
+
+    def fake_get(url, headers):
+        called['url'] = url
+        called['headers'] = headers
+        return FakeResponse()
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError('Real network usage is forbidden in this test')
+
+    local_sign_path = db_dir / 'local-main.cvd.sign'
+    real_exists = Path.exists
+    real_open = Path.open
+    wrote: dict[str, Any] = {}
+
+    class FakeBinaryWriter:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def write(self, data: bytes) -> int:
+            wrote['data'] = data
+            return len(data)
+
+    def fake_exists(self):
+        if self == local_sign_path:
+            # Force the code path that performs the download + save.
+            return False
+        return real_exists(self)
+
+    def fake_open(self, mode='r', *args, **kwargs):
+        if self == local_sign_path and mode == 'wb':
+            wrote['opened'] = True
+            return FakeBinaryWriter()
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr('cvdupdate.cvdupdate.requests.get', fake_get)
+    # Hard guard: if anything tries to open a real socket.
+    monkeypatch.setattr(socket.socket, 'connect', fail_network)
+    monkeypatch.setattr(socket.socket, 'connect_ex', fail_network)
+    monkeypatch.setattr(Path, 'exists', fake_exists)
+    monkeypatch.setattr(Path, 'open', fake_open)
+
+    status = c._download_sign_file_for(
+        file='local-main.cvd',
+        file_url='https://database.clamav.net/main.cvd?version=12345',
+        last_modified=0,
+        version=12345,
+    )
+
+    assert status == CvdStatus.UPDATED
+    assert called['url'] == 'https://database.clamav.net/main-12345.cvd.sign'
+    assert wrote['opened'] is True
+    assert wrote['data'] == b'sigdata'
+    # Confirm no file was actually created by this test.
+    assert not real_exists(local_sign_path)
+
+
+def test_cdiff_rotation_removes_matching_sign_file(revert_homedir, tmp_path, monkeypatch):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+        cdiffs_to_keep=1,
+    )
+
+    class FakeResponse:
+        status_code = 200
+        headers = {'content-length': '7'}
+        content = b'cdiff-1'
+
+    requested_urls = []
+
+    def fake_get(url, headers):
+        requested_urls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr('cvdupdate.cvdupdate.requests.get', fake_get)
+
+    first_cdiff = db_dir / 'daily-1.cdiff'
+    first_sign = db_dir / 'daily-1.cdiff.sign'
+    first_cdiff.write_bytes(b'cdiff-1')
+    first_sign.write_bytes(b'sign-1')
+    c.state['dbs']['daily.cvd']['CDIFFs'] = ['daily-1.cdiff']
+
+    result = c._download_cdiff(
+        db='daily.cvd',
+        file='daily-2.cdiff',
+        db_url='https://database.clamav.net/daily.cvd',
+        last_modified=0,
+        desired_version=2,
+        available_version=2,
+    )
+
+    assert result == CvdStatus.UPDATED
+    assert not first_cdiff.exists()
+    assert not first_sign.exists()
+    assert (db_dir / 'daily-2.cdiff').exists()
+    assert c.state['dbs']['daily.cvd']['CDIFFs'] == ['daily-2.cdiff']
+    assert requested_urls == ['https://database.clamav.net/daily-2.cdiff']
+
+
+def test_config_remove_db_removes_database_and_related_sign_files(revert_homedir, tmp_path):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+    )
+
+    db_path = db_dir / 'daily.cvd'
+    db_sign_path = db_dir / 'daily.cvd.sign'
+    cdiff_path = db_dir / 'daily-1.cdiff'
+    cdiff_sign_path = db_dir / 'daily-1.cdiff.sign'
+
+    db_path.write_bytes(b'db')
+    db_sign_path.write_bytes(b'db-sign')
+    cdiff_path.write_bytes(b'cdiff')
+    cdiff_sign_path.write_bytes(b'cdiff-sign')
+    c.state['dbs']['daily.cvd']['CDIFFs'] = ['daily-1.cdiff']
+
+    assert c.config_remove_db('daily.cvd') is True
+
+    assert not db_path.exists()
+    assert not db_sign_path.exists()
+    assert not cdiff_path.exists()
+    assert not cdiff_sign_path.exists()
+    assert 'daily.cvd' not in c.state['dbs']

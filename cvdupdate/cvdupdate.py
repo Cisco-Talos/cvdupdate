@@ -927,8 +927,12 @@ class CVDUpdate:
 
             # Prune old CDIFFs if needed
             if len(self.state['dbs'][db]['CDIFFs']) > self.config['cdiffs_to_keep']:
+                oldest_cdiff = self.dbs_directory / self.state['dbs'][db]['CDIFFs'][0]
                 try:
-                    os.remove(self.dbs_directory / self.state['dbs'][db]['CDIFFs'][0])
+                    os.remove(oldest_cdiff)
+                    oldest_cdiff_sign = Path(str(oldest_cdiff) + ".sign")
+                    if oldest_cdiff_sign.exists():
+                        os.remove(oldest_cdiff_sign)
                 except Exception as exc:
                     self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                     self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
@@ -970,32 +974,40 @@ class CVDUpdate:
     def _download_sign_file_for(self, file: str, file_url: str, last_modified: int, version=0) -> CvdStatus:
         '''
         Download signature file given a file name.
-        If version > 0, will ensure sign file includes version in the filename, like this:
-        - file-version.ext.sign
+        Save the signature locally as "<local file>.sign", but derive the remote
+        signature filename from the origin URL basename.
         '''
         ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-        sign_file = file + ".sign"
-        if version > 0 and str(version) not in file:
-            # the sign file name should include the version in this format: "file-version.ext.sign"
-            # reconstruct.
-            name_parts = file.rsplit('.', 1)
+        local_sign_file = file + ".sign"
+
+        # Determine the origin file name from URL path (ignore query string/fragments).
+        remote_file = file_url.rsplit('/', 1)[-1].split('?', 1)[0].split('#', 1)[0]
+        if remote_file == "":
+            self.logger.error(f"Invalid URL for signature download: {file_url}")
+            return CvdStatus.ERROR
+
+        remote_sign_file = remote_file + ".sign"
+        if version > 0 and str(version) not in remote_file:
+            # The remote sign file may include a version in this format:
+            # "origin-file-version.ext.sign"
+            name_parts = remote_file.rsplit('.', 1)
             if len(name_parts) == 1:
-                self.logger.error(f"Invalid file name. Lacks extension: {file}")
+                self.logger.error(f"Invalid origin file name. Lacks extension: {remote_file}")
                 return CvdStatus.ERROR
 
             file_name = name_parts[0]
             ext = name_parts[-1]
-            sign_file = f"{file_name}-{version}.{ext}.sign"
+            remote_sign_file = f"{file_name}-{version}.{ext}.sign"
 
         # check if we already have it.
-        if (self.dbs_directory / sign_file).exists():
-            self.logger.debug(f"We already have {sign_file}. Skipping...")
+        if (self.dbs_directory / local_sign_file).exists():
+            self.logger.debug(f"We already have {local_sign_file}. Skipping...")
             return CvdStatus.NO_UPDATE
 
-        # now remove the old file name from the file_url and add the new sign file name
+        # now remove the old file name from the file_url and add the origin sign file name
         base_url = file_url.rsplit('/', 1)[0]
-        url = f"{base_url}/{sign_file}"
+        url = f"{base_url}/{remote_sign_file}"
 
         retry = 0
         response = None
@@ -1021,32 +1033,32 @@ class CVDUpdate:
         if response.status_code == 200:
             # Looks like we downloaded something...
             if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
-                self.logger.error(f"Failed to download {sign_file}")
+                self.logger.error(f"Failed to download {remote_sign_file}")
                 return CvdStatus.ERROR
 
             # Download Success
             if version > 0:
-                self.logger.info(f"Downloaded {sign_file}. Version: {version}")
+                self.logger.info(f"Downloaded {remote_sign_file}. Version: {version}")
             else:
-                self.logger.info(f"Downloaded {sign_file}")
+                self.logger.info(f"Downloaded {remote_sign_file}")
 
             try:
-                with (self.dbs_directory / sign_file).open('wb') as new_db:
+                with (self.dbs_directory / local_sign_file).open('wb') as new_db:
                     new_db.write(response.content)
 
             except Exception as exc:
                 self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
-                self.logger.error(f"Failed to save {sign_file} to {self.dbs_directory}")
+                self.logger.error(f"Failed to save {local_sign_file} to {self.dbs_directory}")
                 return CvdStatus.ERROR
 
         elif response.status_code == 304:
             # Not modified since IMS. We have the latest version.
-            self.logger.info(f"{sign_file} not-modified since: {ims} (local version {version})")
+            self.logger.info(f"{local_sign_file} not-modified since: {ims} (local version {version})")
             return CvdStatus.NO_UPDATE
 
         elif response.status_code == 429:
             # Rejected because downloading the same file too frequently.
-            self.logger.warning(f"Failed to download {sign_file} from {url} with 429 response.")
+            self.logger.warning(f"Failed to download {remote_sign_file} from {url} with 429 response.")
             return CvdStatus.ERROR
 
         else:
@@ -1401,9 +1413,14 @@ class CVDUpdate:
             return False
 
         try:
-            if (self.dbs_directory / db).exists():
-                os.remove(str(self.dbs_directory / db))
+            db_path = self.dbs_directory / db
+            if db_path.exists():
+                os.remove(str(db_path))
                 self.logger.info(f"Deleted {db} from database directory.")
+                db_sign_path = Path(str(db_path) + ".sign")
+                if db_sign_path.exists():
+                    os.remove(str(db_sign_path))
+                    self.logger.info(f"Deleted {db}.sign from database directory.")
 
         except Exception as exc:
             self.logger.debug(f"An exception occured: {exc}")
@@ -1411,9 +1428,14 @@ class CVDUpdate:
 
         for cdiff in self.state['dbs'][db]['CDIFFs']:
             try:
-                if (self.dbs_directory / cdiff).exists():
-                    os.remove(str(self.dbs_directory / cdiff))
+                cdiff_path = self.dbs_directory / cdiff
+                if cdiff_path.exists():
+                    os.remove(str(cdiff_path))
                     self.logger.info(f"Deleted {cdiff} from database directory.")
+                    cdiff_sign_path = Path(str(cdiff_path) + ".sign")
+                    if cdiff_sign_path.exists():
+                        os.remove(str(cdiff_sign_path))
+                        self.logger.info(f"Deleted {cdiff}.sign from database directory.")
 
             except Exception as exc:
                 self.logger.debug(f"An exception occured: {exc}")
