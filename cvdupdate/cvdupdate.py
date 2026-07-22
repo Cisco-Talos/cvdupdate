@@ -80,6 +80,10 @@ class CVDUpdate:
         "cdiffs_rotate":  True,
         "cdiffs_to_keep": 30,
 
+        "proxy_url":      "",
+        "proxy_user":     "",
+        "proxy_pass":     "",
+
         # Resolved at load time to "<config dir>/state.json" when not set, so it
         # stays next to the config (and out of the served database directory).
         "state_file":     "",
@@ -136,8 +140,12 @@ class CVDUpdate:
         dbs_directory: str  = "",
         cdiffs_rotate: bool = None,
         cdiffs_to_keep: int = 0,
+        proxy_url: str      = "",
+        proxy_user: str     = "",
+        proxy_pass: str     = "",
         state_file: str     = "",
         verbose: bool       = False,
+        log_to_stderr: bool = False,
     ) -> None:
         """
         CVDUpdate class.
@@ -152,14 +160,20 @@ class CVDUpdate:
             dbs_directory:  Path where databases will be downloaded.
             cdiffs_rotate:  Rotate CDIFF files. Default: True.
             cdiffs_to_keep: Number of CDIFF files to keep. Default: 30.
+            proxy_url:      Proxy URL (e.g. http://proxy.example.com:8080).
+            proxy_user:     Proxy username.
+            proxy_pass:     Proxy password.
             state_file:     Path to the state file.
             verbose:        Enable DEBUG-level logs. Default: False.
+            log_to_stderr:  Send console logs to stderr, keeping stdout for
+                            command output (health --json, metrics). Default: False.
         """
         try:
             self.version = _get_version('cvdupdate')
         except PackageNotFoundError:
             self.version = "0.0"
         self.verbose = verbose
+        self.log_to_stderr = log_to_stderr
         self._read_config(
             config,
             nameservers,
@@ -171,6 +185,9 @@ class CVDUpdate:
             dbs_directory,
             cdiffs_rotate,
             cdiffs_to_keep,
+            proxy_url,
+            proxy_user,
+            proxy_pass,
             state_file)
         self._init_logging()
 
@@ -188,7 +205,10 @@ class CVDUpdate:
             def filter(self, record: logging.LogRecord) -> bool:
                 return record.levelno < stderr_level
 
-        stdout_handler = logging.StreamHandler(sys.stdout)
+        # Route logs to stderr for commands that print machine-readable output on
+        # stdout (health --json, metrics); otherwise sub-WARNING logs go to stdout.
+        stdout_stream = sys.stderr if self.log_to_stderr else sys.stdout
+        stdout_handler = logging.StreamHandler(stdout_stream)
         stdout_handler.addFilter(FilterNotStdErr())
 
         handlers: list = [stderr_handler, stdout_handler]
@@ -232,6 +252,9 @@ class CVDUpdate:
                      dbs_directory: str,
                      cdiffs_rotate: Optional[bool],
                      cdiffs_to_keep: int,
+                     proxy_url: str,
+                     proxy_user: str,
+                     proxy_pass: str,
                      state_file: str) -> None:
         """
         Read in the config file.
@@ -340,6 +363,15 @@ class CVDUpdate:
         if cdiffs_to_keep != 0:
             self.config["cdiffs_to_keep"] = cdiffs_to_keep
             need_save = True
+        if proxy_url != "":
+            self.config["proxy_url"] = proxy_url
+            need_save = True
+        if proxy_user != "":
+            self.config["proxy_user"] = proxy_user
+            need_save = True
+        if proxy_pass != "":
+            self.config["proxy_pass"] = proxy_pass
+            need_save = True
         if state_file != "":
             self.config["state_file"] = state_file
             need_save = True
@@ -369,7 +401,16 @@ class CVDUpdate:
                     raise exc
 
         try:
-            with self.config_path.open('w') as config_file:
+            # The config may hold a plaintext proxy password, so restrict it to
+            # the owner before writing. Open with 0o600 and fchmod the descriptor
+            # so both new files and pre-existing loose ones are tight before the
+            # secret is written.
+            fd = os.open(str(self.config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            except (OSError, AttributeError):
+                pass  # best-effort (fchmod may be unavailable on Windows)
+            with os.fdopen(fd, 'w') as config_file:
                 json.dump(self.config, config_file, indent=4)
         except Exception as exc:
             print("Failed to create config file!")
@@ -656,6 +697,319 @@ class CVDUpdate:
 
         return ""
 
+    @staticmethod
+    def _proxy_host_port(parsed) -> str:
+        '''
+        Format host[:port] from a parsed URL, handling IPv6 brackets and a
+        possibly-invalid port (parsed.port raises ValueError on bad input).
+        '''
+        host = parsed.hostname or ''
+        if ':' in host:
+            # re-bracket IPv6 literals (urlparse strips the brackets)
+            host = f'[{host}]'
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port:
+            host = f'{host}:{port}'
+        return host
+
+    @staticmethod
+    def _sanitize_proxy_url(url: str) -> str:
+        '''
+        Return the proxy URL with any embedded userinfo masked, so that
+        credentials are never written to logs or printed by `config show`.
+        Never raises: a malformed URL falls back to textual userinfo masking.
+        '''
+        if not url:
+            return url
+
+        import re
+        from urllib.parse import urlparse, urlunparse
+
+        # A scheme-less value such as 'user:pass@host:port' makes urlparse read
+        # the username as the scheme and miss the userinfo. Parse a '//'-prefixed
+        # copy in that case, then strip the prefix back off the masked result.
+        had_scheme = '://' in url
+        work = url if had_scheme else f'//{url}'
+
+        try:
+            parsed = urlparse(work)
+            if not parsed.username and not parsed.password:
+                return url
+            netloc = f'***:***@{CVDUpdate._proxy_host_port(parsed)}'
+            masked = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            return masked if had_scheme else masked[2:]
+        except ValueError:
+            # Unparseable URL (e.g. bad port): mask userinfo textually, don't raise.
+            masked = re.sub(r'(^|//)[^/@]*@', r'\1***:***@', work)
+            return masked if had_scheme else masked[2:]
+
+    def _get_proxy_configuration(self) -> Optional[dict]:
+        '''
+        Get proxy configuration from environment variables or config file.
+        Environment variables take precedence over config file settings.
+
+        If proxy credentials are configured, they are embedded in the proxy
+        URL so that the requests library sends the Proxy-Authorization header.
+
+        Returns:
+            dict: Proxy configuration for requests, or None if not configured.
+        '''
+        from urllib.parse import urlparse, urlunparse, quote
+
+        proxy_url = os.environ.get('CVDUPDATE_PROXY_URL')
+
+        if not proxy_url:
+            proxy_url = self.config.get('proxy_url')
+
+        if not proxy_url:
+            return None
+
+        # Assume http:// when no scheme; otherwise 'host:port' is mis-parsed
+        # (urlparse reads the host as the scheme).
+        if '://' not in proxy_url:
+            self.logger.debug(f"Proxy URL '{proxy_url}' has no scheme; assuming http://")
+            proxy_url = f'http://{proxy_url}'
+
+        proxy_user = os.environ.get('CVDUPDATE_PROXY_USER')
+        proxy_pass = os.environ.get('CVDUPDATE_PROXY_PASS')
+
+        if not proxy_user:
+            proxy_user = self.config.get('proxy_user')
+        if not proxy_pass:
+            proxy_pass = self.config.get('proxy_pass')
+
+        if proxy_user and proxy_pass:
+            parsed = urlparse(proxy_url)
+            if not parsed.username:
+                netloc = f'{quote(proxy_user, safe="")}:{quote(proxy_pass, safe="")}@{self._proxy_host_port(parsed)}'
+                proxy_url = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            self.logger.info(f'Using authenticated proxy: {self._sanitize_proxy_url(proxy_url)}')
+        else:
+            self.logger.info(f'Using proxy: {self._sanitize_proxy_url(proxy_url)}')
+
+        return {
+            'http': proxy_url,
+            'https': proxy_url,
+        }
+
+    def _calculate_age_status(self, last_modified: float) -> tuple:
+        '''
+        Calculate age status based on last modification time.
+
+        Args:
+            last_modified: Unix timestamp of last modification
+
+        Returns:
+            tuple: (age_hours, age_status)
+        '''
+        if last_modified == 0:
+            return (None, 'missing')
+
+        age_seconds = time.time() - last_modified
+        age_hours = age_seconds / 3600
+
+        if age_hours < 24:
+            return (age_hours, 'current')
+        elif age_hours < 48:
+            return (age_hours, 'recent')
+        elif age_hours < 72:
+            return (age_hours, 'stale')
+        else:
+            return (age_hours, 'outdated')
+
+    def db_status(self) -> dict:
+        '''
+        Get status of all databases.
+
+        Returns:
+            dict: Status report containing:
+                - summary: Overall health summary
+                - databases: Per-database status details
+                - warnings: List of issues requiring attention
+        '''
+        dbs = self._index_local_databases()
+        warnings = []
+        databases = []
+
+        # Try to get remote versions via DNS
+        dns_available = False
+        self.dns_version_tokens = []
+        for _attempt in range(self.config.get('max_retries', 3)):
+            if self._query_dns_txt_entry():
+                dns_available = True
+                break
+            time.sleep(0.1)
+
+        if not dns_available:
+            warnings.append('DNS query failed, unable to verify remote versions')
+
+        current_count = 0
+        stale_count = 0
+        outdated_count = 0
+        unknown_count = 0
+        missing_count = 0
+        cooldown_count = 0
+
+        for db_name in dbs:
+            db_info = dbs[db_name]
+            db_path = self.dbs_directory / db_name
+
+            # Build the row in a try/except so one malformed entry (e.g. a bad
+            # 'retry after') yields an error row instead of crashing the report.
+            # Shared tallies are only touched below, after this succeeds.
+            try:
+                is_missing = not db_path.exists()
+
+                local_version = db_info.get('local version', 0) if db_name.endswith('.cvd') else None
+
+                remote_version = None
+                if dns_available and db_name.endswith('.cvd') and db_info.get('DNS field', 0) > 0:
+                    try:
+                        remote_version = int(self.dns_version_tokens[db_info['DNS field']])
+                    except (IndexError, ValueError):
+                        pass
+
+                # 'unknown' (couldn't verify remote, e.g. DNS down) stays distinct
+                # from 'outdated'.
+                is_current = False
+                if local_version is not None and remote_version is not None:
+                    if local_version >= remote_version:
+                        version_status = 'current'
+                        is_current = True
+                    else:
+                        version_status = 'outdated'
+                else:
+                    version_status = 'unknown'
+
+                # Coerce a missing/corrupt timestamp to 0.
+                last_modified = db_info.get('last modified', 0) or 0
+                if not isinstance(last_modified, (int, float)):
+                    last_modified = 0
+                age_hours, age_status = self._calculate_age_status(last_modified)
+
+                # Coerce a corrupt 'retry after' too.
+                on_cooldown = False
+                cooldown_until = None
+                cooldown_str = None
+                retry_after = db_info.get('retry after', 0) or 0
+                if not isinstance(retry_after, (int, float)):
+                    retry_after = 0
+                if retry_after > time.time():
+                    on_cooldown = True
+                    cooldown_until = retry_after
+                    cooldown_str = datetime.datetime.fromtimestamp(retry_after).strftime('%Y-%m-%d %H:%M:%S')
+
+                # Get file size
+                file_size_bytes = None
+                if not is_missing:
+                    try:
+                        file_size_bytes = db_path.stat().st_size
+                    except OSError:
+                        pass
+
+                cdiff_count = len(db_info.get('CDIFFs', []) or [])
+
+                age_seconds = None
+                if last_modified > 0:
+                    age_seconds = time.time() - last_modified
+            except Exception as exc:
+                self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+                self.logger.error(f"Failed to read status for {db_name}: {exc}")
+                missing_count += 1
+                warnings.append(f'Database {db_name} could not be read: {exc}')
+                databases.append({
+                    'name': db_name,
+                    'local_version': None,
+                    'remote_version': None,
+                    'is_current': False,
+                    'version_status': 'error',
+                    'is_missing': True,
+                    'last_modified': 0,
+                    'age_hours': None,
+                    'age_seconds': None,
+                    'age_status': 'missing',
+                    'on_cooldown': False,
+                    'cooldown_until': None,
+                    'cdiff_count': 0,
+                    'file_size_bytes': None,
+                })
+                continue
+
+            # Commit shared tallies only after a clean computation.
+            if is_missing:
+                missing_count += 1
+                warnings.append(f'Database {db_name} is missing from disk')
+
+            if version_status == 'outdated':
+                warnings.append(f'Database {db_name} is behind: local v{local_version} vs remote v{remote_version}')
+
+            # Age alone doesn't mark a db unhealthy: main.cvd changes rarely, so a
+            # current mirror can hold an old but correct file.
+            if not is_missing:
+                if version_status == 'current':
+                    current_count += 1
+                elif version_status == 'outdated':
+                    outdated_count += 1
+                else:
+                    unknown_count += 1
+
+            # Only flag age staleness when the database is not confirmed current.
+            if age_status in ('stale', 'outdated') and version_status != 'current':
+                stale_count += 1
+                if age_hours is not None:
+                    warnings.append(f'Database {db_name} is {int(age_hours)} hours old and may be stale')
+
+            if on_cooldown:
+                cooldown_count += 1
+                warnings.append(f'Database {db_name} is on cooldown until {cooldown_str}')
+
+            databases.append({
+                'name': db_name,
+                'local_version': local_version,
+                'remote_version': remote_version,
+                'is_current': is_current,
+                'version_status': version_status,
+                'is_missing': is_missing,
+                'last_modified': last_modified,
+                'age_hours': age_hours,
+                'age_seconds': age_seconds,
+                'age_status': age_status,
+                'on_cooldown': on_cooldown,
+                'cooldown_until': cooldown_until,
+                'cdiff_count': cdiff_count,
+                'file_size_bytes': file_size_bytes,
+            })
+
+        # Overall status from actionable conditions only. A DNS failure adds a
+        # warning but does not change status, so a DNS blip won't fail --check
+        # when the on-disk databases are current.
+        total_databases = len(dbs)
+        if missing_count > 0:
+            overall_status = 'critical'
+        elif outdated_count > 0 or cooldown_count > 0 or stale_count > 0:
+            overall_status = 'warning'
+        else:
+            overall_status = 'healthy'
+
+        return {
+            'summary': {
+                'total_databases': total_databases,
+                'current_count': current_count,
+                'stale_count': stale_count,
+                'outdated_count': outdated_count,
+                'unknown_count': unknown_count,
+                'missing_count': missing_count,
+                'cooldown_count': cooldown_count,
+                'overall_status': overall_status,
+                'last_check': time.time(),
+            },
+            'databases': databases,
+            'warnings': warnings,
+        }
+
     def _query_cvd_version_dns(self, db: str) -> int:
         '''
         This is a faux query.
@@ -709,6 +1063,7 @@ class CVDUpdate:
 
         ims = datetime.datetime.fromtimestamp(self.state['dbs'][db]['last modified'], tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
+        proxies = self._get_proxy_configuration()
         retry = 0
         response = None
         while retry < self.config['max_retries']:
@@ -716,7 +1071,7 @@ class CVDUpdate:
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 'Range': 'bytes=0-95',
                 'If-Modified-Since': ims,
-            })
+            }, proxies=proxies)
 
             if ((response.status_code == 200 or response.status_code == 206) and
                 ('content-length' in response.headers) and
@@ -781,13 +1136,14 @@ class CVDUpdate:
         '''
         ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
+        proxies = self._get_proxy_configuration()
         retry = 0
         response = None
         while retry < self.config['max_retries']:
             response = requests.get(url, headers = {
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 'If-Modified-Since': ims,
-            })
+            }, proxies=proxies)
 
             if ((response.status_code == 200 or response.status_code == 206) and
                 ('content-length' in response.headers) and
@@ -887,12 +1243,13 @@ class CVDUpdate:
         base_url = db_url.rsplit('/', 1)[0]
         url = f"{base_url}/{file}"
 
+        proxies = self._get_proxy_configuration()
         retry = 0
         response = None
         while retry < self.config['max_retries']:
             response = requests.get(url, headers = {
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
-            })
+            }, proxies=proxies)
 
             if ((response.status_code == 200 or response.status_code == 206) and
                 ('content-length' in response.headers) and
@@ -997,13 +1354,14 @@ class CVDUpdate:
         base_url = file_url.rsplit('/', 1)[0]
         url = f"{base_url}/{sign_file}"
 
+        proxies = self._get_proxy_configuration()
         retry = 0
         response = None
         while retry < self.config['max_retries']:
             response = requests.get(url, headers = {
                 'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
                 'If-Modified-Since': ims,
-            })
+            }, proxies=proxies)
 
             if ((response.status_code == 200 or response.status_code == 206) and
                 ('content-length' in response.headers) and
@@ -1182,7 +1540,7 @@ class CVDUpdate:
                 current_version_str = _get_version(name)
                 current_version = version.parse(current_version_str)
 
-                response = requests.get(f"https://pypi.org/pypi/{name}/json")  # Get package info
+                response = requests.get(f"https://pypi.org/pypi/{name}/json", proxies=self._get_proxy_configuration())  # Get package info
                 response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
                 latest_version_str = response.json()["info"]["version"]
                 latest_version = version.parse(latest_version_str)
