@@ -295,4 +295,3 @@ class TestDbStatusVersionState:
         custom = next(db for db in status['databases'] if db['name'] == 'custom.ndb')
         assert custom['version_status'] == 'unknown'
         assert status['summary']['overall_status'] == 'healthy'
-

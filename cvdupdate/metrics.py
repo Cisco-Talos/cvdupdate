@@ -151,4 +151,3 @@ class PrometheusMetrics:
         lines.append(f'cvdupdate_last_check_timestamp {int(last_check)}')
 
         return '\n'.join(lines) + '\n'
-

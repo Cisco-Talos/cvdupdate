@@ -143,6 +143,17 @@ class TestPasswordMasking:
         assert 'supersecret' not in result.output
         assert '***:***@proxy.example.com:8080' in result.output
 
+    def test_config_show_masks_scheme_less_embedded_credentials(self, revert_homedir):
+        """A scheme-less proxy_url with userinfo must be masked in config show."""
+        c = CVDUpdate()
+        c.config['proxy_url'] = 'user:supersecret@proxy.example.com:8080'
+        c._save_config()
+
+        result = CliRunner().invoke(cli, ['config', 'show', '--config', str(c.config_path)])
+        assert result.exit_code == 0
+        assert 'supersecret' not in result.output
+        assert '***:***@proxy.example.com:8080' in result.output
+
 
 class TestSanitizeProxyUrl:
     """Tests for the _sanitize_proxy_url helper."""
@@ -168,6 +179,17 @@ class TestSanitizeProxyUrl:
         url = 'http://user:secret@proxy.example.com:notaport'
         sanitized = CVDUpdate._sanitize_proxy_url(url)
         assert 'secret' not in sanitized
+
+    def test_masks_scheme_less_userinfo(self, revert_homedir):
+        # urlparse reads 'alice' as the scheme unless we normalize first.
+        url = 'alice:secret@proxy.example.com:8080'
+        sanitized = CVDUpdate._sanitize_proxy_url(url)
+        assert 'secret' not in sanitized
+        assert sanitized == '***:***@proxy.example.com:8080'
+
+    def test_leaves_scheme_less_url_without_userinfo_unchanged(self, revert_homedir):
+        url = 'proxy.example.com:8080'
+        assert CVDUpdate._sanitize_proxy_url(url) == url
 
 
 class TestProxyUrlHardening:
@@ -251,6 +273,22 @@ class TestConfigFilePermissions:
         mode = stat.S_IMODE(os.stat(cfg).st_mode)
         assert mode == 0o600
 
+    @pytest.mark.skipif(os.name != 'posix', reason='POSIX file modes only')
+    def test_pre_existing_loose_config_is_tightened(self, revert_homedir, tmp_path):
+        import stat
+        cfg = tmp_path / 'config.json'
+        cfg.write_text('{}')
+        os.chmod(str(cfg), 0o644)
+        c = CVDUpdate(
+            config=str(cfg),
+            state_file=str(tmp_path / 'state.json'),
+            dbs_directory=str(tmp_path / 'db'),
+        )
+        c.config['proxy_pass'] = 'secret'
+        c._save_config()
+        mode = stat.S_IMODE(os.stat(cfg).st_mode)
+        assert mode == 0o600
+
 
 class TestProxyLogging:
     """Tests that proxy credentials are never written to the logs."""
@@ -279,4 +317,3 @@ class TestProxyLogging:
         # Nothing logged may contain the secret.
         assert all('supersecret' not in msg for msg in messages)
         assert any('***:***@proxy.example.com:8080' in msg for msg in messages)
-

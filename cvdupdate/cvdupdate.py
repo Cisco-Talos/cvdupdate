@@ -401,13 +401,17 @@ class CVDUpdate:
                     raise exc
 
         try:
-            with self.config_path.open('w') as config_file:
-                json.dump(self.config, config_file, indent=4)
-            # Restrict to owner; the config may hold a plaintext proxy password.
+            # The config may hold a plaintext proxy password, so restrict it to
+            # the owner before writing. Open with 0o600 and fchmod the descriptor
+            # so both new files and pre-existing loose ones are tight before the
+            # secret is written.
+            fd = os.open(str(self.config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             try:
-                os.chmod(str(self.config_path), 0o600)
-            except OSError:
-                pass  # best-effort (may no-op on Windows)
+                os.fchmod(fd, 0o600)
+            except (OSError, AttributeError):
+                pass  # best-effort (fchmod may be unavailable on Windows)
+            with os.fdopen(fd, 'w') as config_file:
+                json.dump(self.config, config_file, indent=4)
         except Exception as exc:
             print("Failed to create config file!")
             raise exc
@@ -724,15 +728,23 @@ class CVDUpdate:
         import re
         from urllib.parse import urlparse, urlunparse
 
+        # A scheme-less value such as 'user:pass@host:port' makes urlparse read
+        # the username as the scheme and miss the userinfo. Parse a '//'-prefixed
+        # copy in that case, then strip the prefix back off the masked result.
+        had_scheme = '://' in url
+        work = url if had_scheme else f'//{url}'
+
         try:
-            parsed = urlparse(url)
+            parsed = urlparse(work)
             if not parsed.username and not parsed.password:
                 return url
             netloc = f'***:***@{CVDUpdate._proxy_host_port(parsed)}'
-            return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            masked = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            return masked if had_scheme else masked[2:]
         except ValueError:
             # Unparseable URL (e.g. bad port): mask userinfo textually, don't raise.
-            return re.sub(r'(//)[^/@]*@', r'\1***:***@', url)
+            masked = re.sub(r'(^|//)[^/@]*@', r'\1***:***@', work)
+            return masked if had_scheme else masked[2:]
 
     def _get_proxy_configuration(self) -> Optional[dict]:
         '''

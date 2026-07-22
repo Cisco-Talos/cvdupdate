@@ -45,6 +45,19 @@ def _all_output(result):
     return text
 
 
+def _stderr_runner():
+    """A CliRunner that keeps stdout and stderr separate across Click versions."""
+    try:
+        return CliRunner(mix_stderr=False)  # Click < 8.2
+    except TypeError:
+        return CliRunner()                  # Click >= 8.2 always separates streams
+
+
+def _stdout(result):
+    """Stdout only; on Click >= 8.2 result.output may include stderr."""
+    return getattr(result, 'stdout', result.output)
+
+
 # --- status / list ---------------------------------------------------------
 
 def test_list_prints_only_names(revert_homedir, tmp_path):
@@ -360,12 +373,13 @@ def _write_config_state(tmp_path, dbs):
 def test_health_json_stdout_is_clean_despite_logs(revert_homedir, tmp_path):
     cfg = _init_config(tmp_path)
     with mock.patch.object(CVDUpdate, '_query_dns_txt_entry', autospec=True, side_effect=_dns_fail_but_log):
-        result = CliRunner(mix_stderr=False).invoke(cli, ['health', '--config', cfg, '--json'])
+        result = _stderr_runner().invoke(cli, ['health', '--config', cfg, '--json'])
     assert result.exit_code == 0, result.output
     # stdout must be valid JSON, uncontaminated by the log line ...
-    payload = json.loads(result.output)
+    out = _stdout(result)
+    payload = json.loads(out)
     assert 'summary' in payload
-    assert _SENTINEL not in result.output
+    assert _SENTINEL not in out
     # ... and the log line must have gone to stderr instead.
     assert _SENTINEL in result.stderr
 
@@ -373,9 +387,9 @@ def test_health_json_stdout_is_clean_despite_logs(revert_homedir, tmp_path):
 def test_metrics_stdout_is_clean_despite_logs(revert_homedir, tmp_path):
     cfg = _init_config(tmp_path)
     with mock.patch.object(CVDUpdate, '_query_dns_txt_entry', autospec=True, side_effect=_dns_fail_but_log):
-        result = CliRunner(mix_stderr=False).invoke(cli, ['metrics', '--config', cfg])
+        result = _stderr_runner().invoke(cli, ['metrics', '--config', cfg])
     assert result.exit_code == 0, result.output
-    non_empty = [l for l in result.output.splitlines() if l.strip()]
+    non_empty = [l for l in _stdout(result).splitlines() if l.strip()]
     # Every stdout line is a HELP/TYPE comment or a metric sample, never a log.
     assert non_empty
     assert all(l.startswith('#') or l.startswith('cvdupdate_') for l in non_empty)
@@ -395,7 +409,7 @@ def test_health_check_healthy_when_current_but_dns_down(revert_homedir, tmp_path
     })
     (db_dir / 'test.cud').write_text('present')
     with mock.patch.object(CVDUpdate, '_query_dns_txt_entry', autospec=True, return_value=False):
-        result = CliRunner(mix_stderr=False).invoke(cli, ['health', '--config', cfg, '--check'])
+        result = _stderr_runner().invoke(cli, ['health', '--config', cfg, '--check'])
     # DBs present on disk + DNS unavailable => healthy, exit 0 (not a false page).
     assert result.exit_code == 0, result.output
 
@@ -412,10 +426,10 @@ def test_health_survives_corrupt_state_entry(revert_homedir, tmp_path):
     })
     (db_dir / 'daily.cud').write_text('present')
     with mock.patch.object(CVDUpdate, '_query_dns_txt_entry', autospec=True, return_value=False):
-        result = CliRunner(mix_stderr=False).invoke(cli, ['health', '--config', cfg, '--json'])
+        result = _stderr_runner().invoke(cli, ['health', '--config', cfg, '--json'])
     # A malformed 'retry after'/'last modified'/'CDIFFs' must not crash the
     # report; valid JSON on stdout proves db_status produced a verdict.
-    payload = json.loads(result.output)
+    payload = json.loads(_stdout(result))
     assert 'summary' in payload
 
 

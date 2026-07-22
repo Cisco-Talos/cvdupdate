@@ -396,4 +396,3 @@ class TestMetricsUnknownVersion:
         }
         output = PrometheusMetrics(status).generate()
         assert 'cvdupdate_database_current{database="main.cvd"}' not in output
-
