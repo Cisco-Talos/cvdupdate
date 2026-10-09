@@ -441,7 +441,7 @@ def serve(port: int, config: str, verbose: bool, update_interval_seconds: int):
     """
     m = CVDUpdate(config=config, verbose=verbose)
     os.chdir(str(m.dbs_directory))
-    auto_updater.start(update_interval_seconds)
+    auto_updater.start(update_interval_seconds,m)
 
     # Don't expose hidden files (e.g. a dot-prefixed state file) over the mirror.
     MirrorRequestHandler.protocol_version = 'HTTP/1.0'
