@@ -279,6 +279,8 @@ cvd config show --json         # current configuration
 | `--cdiffs-rotate` / `--no-cdiffs-rotate` | Rotate (delete) old CDIFF files (default: on). |
 | `--cdiffs-to-keep` | Number of CDIFFs to keep per database when rotating (default `30`). |
 | `--state-file` | Path to the state file (stores versions, UUID, and per-database metadata). |
+| `--atomic-replace` / `--no-atomic-replace` | Swap downloaded databases into place with an atomic rename (default: on). Turn off only when the database files themselves are mount points (e.g. Docker single-file bind mounts); files are then overwritten in place, so clients may briefly see a partially written file. |
+| `--tmp-max-age-hours` | Remove temp files left by interrupted downloads once they are older than this many hours (default `4`). |
 
 ```bash
 # e.g. point databases at your web root and keep the state file alongside it

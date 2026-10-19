@@ -1,4 +1,6 @@
 import json
+import os
+import time
 import datetime
 import socket
 from pathlib import Path
@@ -310,3 +312,241 @@ def test_config_remove_db_removes_database_and_related_sign_files(revert_homedir
     assert not cdiff_path.exists()
     assert not cdiff_sign_path.exists()
     assert 'daily.cvd' not in c.state['dbs']
+
+
+def _db_download_client(tmp_path, monkeypatch, content: bytes, content_length=None):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+    )
+
+    requests_made = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {'content-length': str(len(content) if content_length is None else content_length)}
+
+        def iter_content(self, chunk_size):
+            # Small chunks to exercise the streaming write path.
+            for i in range(0, len(content), 16):
+                yield content[i:i + 16]
+
+        def close(self):
+            pass
+
+    class NoSignResponse:
+        status_code = 404
+        headers = {}
+        content = b''
+
+    def fake_get(url, headers, stream=False):
+        if url.endswith('.sign'):
+            return NoSignResponse()
+        requests_made.append({'url': url, 'stream': stream})
+        return FakeResponse()
+
+    monkeypatch.setattr('cvdupdate.cvdupdate.requests.get', fake_get)
+    return c, db_dir, requests_made
+
+
+PROVIDER_NOTICE = (
+    b"Do you want to download additional signatures?\n"
+    b"Please go to :\n\n"
+    b"https://example.com/subscribe\n"
+)
+
+THIRD_PARTY_DB_STATE = {'retry after': 0, 'last modified': 0, 'local version': 0}
+
+
+def test_download_rejects_non_signature_text_and_keeps_existing_db(revert_homedir, tmp_path, monkeypatch):
+    c, db_dir, _ = _db_download_client(tmp_path, monkeypatch, PROVIDER_NOTICE)
+    url = 'https://example.com/provider.ign2'
+    c.state['dbs']['provider.ign2'] = dict(THIRD_PARTY_DB_STATE, url=url)
+    existing = db_dir / 'provider.ign2'
+    existing.write_bytes(b'Provider.Old.Sig\n')
+
+    status = c._download_db_from_url('provider.ign2', url, 0)
+
+    assert status == CvdStatus.ERROR
+    assert existing.read_bytes() == b'Provider.Old.Sig\n'
+    assert c.state['dbs']['provider.ign2']['last modified'] == 0
+    assert sorted(f.name for f in db_dir.iterdir()) == ['provider.ign2']
+
+
+def test_download_streams_valid_text_db_into_place(revert_homedir, tmp_path, monkeypatch):
+    content = b'# comment\nProvider.Some.Sig\r\nOther.Sig:0123456789abcdef0123456789abcdef\n'
+    c, db_dir, requests_made = _db_download_client(tmp_path, monkeypatch, content)
+    url = 'https://example.com/provider.ign2'
+    c.state['dbs']['provider.ign2'] = dict(THIRD_PARTY_DB_STATE, url=url)
+
+    status = c._download_db_from_url('provider.ign2', url, 0)
+
+    assert status == CvdStatus.UPDATED
+    assert requests_made[0] == {'url': url, 'stream': True}
+    assert (db_dir / 'provider.ign2').read_bytes() == content
+    assert not (db_dir / '.provider.ign2.tmp').exists()
+    assert c.state['dbs']['provider.ign2']['last modified'] > 0
+
+
+def test_download_truncated_response_retries_and_keeps_existing_db(revert_homedir, tmp_path, monkeypatch):
+    content = b'Some.Sig\n'
+    c, db_dir, requests_made = _db_download_client(tmp_path, monkeypatch, content, content_length=len(content) + 100)
+    url = 'https://example.com/x.ign2'
+    c.state['dbs']['x.ign2'] = dict(THIRD_PARTY_DB_STATE, url=url)
+    existing = db_dir / 'x.ign2'
+    existing.write_bytes(b'Old.Sig\n')
+
+    status = c._download_db_from_url('x.ign2', url, 0)
+
+    assert status == CvdStatus.ERROR
+    assert len(requests_made) == c.config['max_retries']
+    assert existing.read_bytes() == b'Old.Sig\n'
+    assert sorted(f.name for f in db_dir.iterdir()) == ['x.ign2']
+
+
+CVD_HEADER = b'ClamAV-VDB:01 Jan 2026 00-00 +0000:27000:100:90:sig:builder:1700000000'.ljust(512, b' ')
+
+
+def test_download_cvd_sets_local_version_from_saved_file(revert_homedir, tmp_path, monkeypatch):
+    c, db_dir, _ = _db_download_client(tmp_path, monkeypatch, CVD_HEADER + b'body')
+    url = 'https://example.com/custom.cvd'
+    c.state['dbs']['custom.cvd'] = dict(THIRD_PARTY_DB_STATE, url=url)
+
+    status = c._download_db_from_url('custom.cvd', url, 0, version=27000)
+
+    assert status == CvdStatus.UPDATED
+    assert c.state['dbs']['custom.cvd']['local version'] == 27000
+
+
+def test_validate_db_file(revert_homedir, tmp_path):
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(tmp_path / 'db'),
+    )
+
+    def check(db, content, version=0):
+        path = tmp_path / f'candidate-{db}'
+        path.write_bytes(content)
+        return c._validate_db_file(db, path, version)
+
+    assert check('daily.cvd', CVD_HEADER + b'body', 27000) is None
+    # Advertised (DNS) version may lag behind the published file: newer is fine, older is a stale mirror.
+    assert check('daily.cvd', CVD_HEADER + b'body', 26999) is None
+    assert check('daily.cvd', CVD_HEADER + b'body', 27001) is not None
+    assert check('daily.cvd', b'', 27000) is not None
+    assert check('daily.cvd', b'<html>nope</html>', 27000) is not None
+    assert check('x.hdb', b'44d88612fea8a8f36de82e1278abb02f:68:Eicar-Test-Signature\n') is None
+    assert check('x.hdb', b'not a hash line\n') is not None
+    assert check('x.ldb', b'Sig.Name;Engine:51-255,Target:0;0;41424344\n') is None
+    assert check('x.ndb', b'<!DOCTYPE html><html></html>') is not None
+    assert check('x.yara', b'rule a { condition: true }') is None
+    # Empty text databases are valid (e.g. an empty ignore list).
+    assert check('x.ign2', b'') is None
+    # ClamAV does not forbid whitespace in signature names.
+    assert check('x.ndb', b'Name With Spaces:0:*:4142\n') is None
+    assert check('x.ign2', b'Name With Spaces\n') is None
+    # .ign2 follows cli_loadign(): name, name:md5 or legacy db:line:name.
+    assert check('x.ign2', b'Sig.A:44d88612fea8a8f36de82e1278abb02f\n') is None
+    assert check('x.ign2', b'daily.ndb:12:Sig.A\n') is None
+    assert check('x.ign2', b'Sig.A:not-an-md5\n') is not None
+    assert check('x.ign2', b'a:b:c:d\n') is not None
+    assert check('x.ign2', b'daily.ndb:12:\n') is not None
+    assert check('x.ign2', b'Good.Sig\nBad\x00Sig\n') is not None
+    assert check('x.ign2', PROVIDER_NOTICE) is not None
+
+
+def test_validate_db_file_mirrors_clamav_loaders(revert_homedir, tmp_path):
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(tmp_path / 'db'),
+    )
+
+    def check(db, content):
+        path = tmp_path / f'candidate-{db}'
+        path.write_bytes(content)
+        return c._validate_db_file(db, path)
+
+    md5 = b'44d88612fea8a8f36de82e1278abb02f'
+
+    # Field counts per loader (min-max).
+    assert check('x.hdb', md5 + b':68:Sig:73:255\n') is None
+    assert check('x.hdb', md5 + b':68:Sig:73:255:extra\n') is not None
+    assert check('x.ndb', b'Sig:0:*:4142:73:255\n') is None
+    assert check('x.ndb', b'Sig:0:*:4142:73:255:extra\n') is not None
+    assert check('x.sdb', b'Sig:0:*\n') is not None
+    assert check('x.ldb', b'Sig;Engine:81-255,Target:1;0\n') is not None
+    assert check('x.cdb', b'Sig:CL_TYPE_ZIP:*:evil\\.exe:*:*:*:*:*:*\n') is None
+    assert check('x.cdb', b'Sig:CL_TYPE_ZIP:*\n') is not None
+    assert check('x.ftm', b'0:0:4d5a:Sig:CL_TYPE_ANY:CL_TYPE_MSEXE\n') is None
+    assert check('x.ftm', b'0:0:4d5a:Sig\n') is not None
+    assert check('x.idb', b'Sig:GROUP1:GROUP2:' + md5 + b'\n') is None
+    assert check('x.idb', b'Sig:GROUP1:' + md5 + b'\n') is not None
+    assert check('x.pwdb', b'Sig;Engine:81-255;0;password\n') is None
+    assert check('x.pwdb', b'Sig;password\n') is not None
+
+    # Regex lists: line type letter, then ':'.
+    assert check('x.pdb', b'R:.+\\.example\\.com\nH:example.org\nS:F:' + md5 + b'\n') is None
+    assert check('x.wdb', b'X:.+\\.example\\.com:.+\\.example\\.org:17-\nM:example.com:example.org\n') is None
+    assert check('x.pdb', b'X:.+\\.example\\.com\n') is not None
+    assert check('x.wdb', b'S:F:' + md5 + b'\n') is not None
+    assert check('x.pdb', b'R.+\\.example\\.com\n') is not None
+
+    # Comments only in the first column; empty lines only where ClamAV skips them.
+    assert check('x.ndb', b'# comment\nSig:0:*:4142\n') is None
+    assert check('x.ndb', b'  # indented comment\nSig:0:*:4142\n') is not None
+    assert check('x.ndb', b'Sig.A:0:*:4142\n\nSig.B:0:*:4142\n') is not None
+    assert check('x.ign2', b'Sig.A\n\n') is not None
+    assert check('x.pdb', b'R:.+\\.example\\.com\n\nH:example.org\n') is None
+
+
+def test_download_without_atomic_replace_overwrites_in_place(revert_homedir, tmp_path, monkeypatch):
+    content = b'New.Sig\n'
+    c, db_dir, _ = _db_download_client(tmp_path, monkeypatch, content)
+    c.config['atomic_replace'] = False
+    url = 'https://example.com/x.ign2'
+    c.state['dbs']['x.ign2'] = dict(THIRD_PARTY_DB_STATE, url=url)
+    existing = db_dir / 'x.ign2'
+    existing.write_bytes(b'Old.Sig.With.A.Longer.Name\n')
+    inode_before = os.stat(existing).st_ino
+
+    status = c._download_db_from_url('x.ign2', url, 0)
+
+    assert status == CvdStatus.UPDATED
+    assert existing.read_bytes() == content
+    # Same file overwritten, not replaced: what a single-file bind mount needs.
+    assert os.stat(existing).st_ino == inode_before
+    assert sorted(f.name for f in db_dir.iterdir()) == ['x.ign2']
+
+
+def test_clean_stale_tmp_files_removes_only_old_temp_files(revert_homedir, tmp_path):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+    )
+    assert c.config['tmp_max_age_hours'] == 4
+
+    old = time.time() - 5 * 60 * 60
+    stale_tmp = db_dir / '.daily.cvd.tmp'
+    fresh_tmp = db_dir / '.main.cvd.tmp'
+    old_db = db_dir / 'daily.cvd'
+    old_plain_tmp = db_dir / 'notes.tmp'
+    for f in (stale_tmp, fresh_tmp, old_db, old_plain_tmp):
+        f.write_bytes(b'x')
+    for f in (stale_tmp, old_db, old_plain_tmp):
+        os.utime(f, (old, old))
+
+    c._clean_stale_tmp_files()
+
+    assert not stale_tmp.exists()
+    assert fresh_tmp.exists()
+    assert old_db.exists()
+    assert old_plain_tmp.exists()

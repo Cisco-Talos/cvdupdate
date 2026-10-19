@@ -28,6 +28,39 @@
 
   [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
 
+- 🐛 Fixed downloads replacing a database with whatever the server returned
+  with HTTP 200, such as an error or upsell page. Downloaded content is now
+  validated before it is saved: CVD/CLD/CUD files must have a `ClamAV-VDB`
+  header with at least the advertised version, HTML pages are rejected, and
+  every line of text signature databases (`.hdb`, `.ndb`, `.ldb`, `.cdb`,
+  `.ftm`, `.idb`, `.pdb`, `.wdb`, `.ign2`, ...) is checked the way the ClamAV
+  loaders parse it: field counts, line types, comments only in the first
+  column and empty lines only where ClamAV skips them. Empty text databases
+  are accepted. Invalid downloads are reported as errors and the existing
+  local database is kept.
+
+- 🌌 Databases are now streamed to a temporary file next to the target,
+  synced to disk, validated line by line and moved into place atomically, so
+  memory usage no longer grows with the database size and an interrupted or
+  rejected download never leaves a partial file behind.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- ➕ Added `cvd config set --tmp-max-age-hours` (default `4`): temp files left
+  behind by a crashed or killed update are removed on the next update once
+  they are older than this.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- ➕ Added `cvd config set --atomic-replace/--no-atomic-replace` (default: on).
+  Turn it off when database files are mount points (e.g. Docker single-file
+  bind mounts), where an atomic rename over them fails; files are then
+  overwritten in place.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
 ## Version 1.3.0
 
 - ➕ Added a `cvd status` command (alias `s`) that reports the status of all

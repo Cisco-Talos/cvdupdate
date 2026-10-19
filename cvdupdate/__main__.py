@@ -301,13 +301,18 @@ def config():
               help="Number of CDIFF files to keep.")
 @click.option("--state-file", type=click.Path(), default="",
               help="Path to the state file.")
+@click.option("--atomic-replace/--no-atomic-replace", default=None,
+              help="Swap databases into place with an atomic rename (default). Disable when database "
+                   "files are mount points, e.g. Docker single-file bind mounts.")
+@click.option("--tmp-max-age-hours", type=int, default=0,
+              help="Remove leftover download temp files older than this many hours (default 4).")
 # Deprecated flag names from <= 1.2.0, kept as hidden aliases for backward compatibility.
 @click.option("--nameserver", type=str, default="", hidden=True)
 @click.option("--logdir", type=click.Path(), default="", hidden=True)
 @click.option("--dbdir", type=click.Path(), default="", hidden=True)
 def config_set(ctx, config, verbose, nameservers, max_retries, logs_enabled, logs_directory,
                logs_rotate, logs_to_keep, dbs_directory, cdiffs_rotate, cdiffs_to_keep,
-               state_file, nameserver, logdir, dbdir):
+               state_file, atomic_replace, tmp_max_age_hours, nameserver, logdir, dbdir):
     """
     Set configuration options.
 
@@ -350,6 +355,8 @@ def config_set(ctx, config, verbose, nameservers, max_retries, logs_enabled, log
         and cdiffs_rotate is None
         and cdiffs_to_keep == 0
         and state_file == ""
+        and atomic_replace is None
+        and tmp_max_age_hours == 0
     )
     if no_options_set:
         click.echo(ctx.get_help())
@@ -367,6 +374,8 @@ def config_set(ctx, config, verbose, nameservers, max_retries, logs_enabled, log
         cdiffs_rotate=cdiffs_rotate,
         cdiffs_to_keep=cdiffs_to_keep,
         state_file=state_file,
+        atomic_replace=atomic_replace,
+        tmp_max_age_hours=tmp_max_age_hours,
     )
 
 
