@@ -8,6 +8,67 @@
 > - Fixed: 🐛
 > - Security: 🛡
 
+## Version 1.3.1
+
+- 🐛 Fixed signature download behavior for mirrored databases with custom local
+  names: the remote `.sign` filename is now derived from the origin URL, while
+  the downloaded signature is still saved locally as `<local-db-name>.sign`.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- 🐛 Added regression tests to verify origin-name vs local-name signature
+  handling, with mocked HTTP and a socket-level guard to ensure tests do not
+  perform real network connections.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- 🐛 Fixed cleanup so pruning an old `.cdiff` or removing a database also
+  deletes its matching `.sign` file, keeping rotated files fully removed from
+  the mirror.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- 🐛 Fixed downloads replacing a database with whatever the server returned
+  with HTTP 200, such as an error or upsell page. Downloaded content is now
+  validated before it is saved: CVD/CLD/CUD files must have a `ClamAV-VDB`
+  header with at least the advertised version, HTML pages are rejected, and
+  every line of text signature databases (`.hdb`, `.ndb`, `.ldb`, `.cdb`,
+  `.ftm`, `.idb`, `.pdb`, `.wdb`, `.ign2`, ...) is checked the way the ClamAV
+  loaders parse it: field counts, line types, comments only in the first
+  column and empty lines only where ClamAV skips them. Empty text databases
+  are accepted. Invalid downloads are reported as errors and the existing
+  local database is kept.
+
+- 🌌 Databases are now streamed to a temporary file next to the target,
+  synced to disk, validated line by line and moved into place atomically, so
+  memory usage no longer grows with the database size and an interrupted or
+  rejected download never leaves a partial file behind.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- 🐛 Fixed `dns.txt` not being updated when an additional (non-DNS) database
+  failed to update. `dns.txt` is now written whenever every database
+  advertised through DNS (`main`, `daily`, `bytecode`) is up-to-date after the
+  run, regardless of errors in other databases, and only if its content
+  changed. It is not written when only a single database is updated.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- ➕ Added `cvd config set --tmp-max-age-hours` (default `4`): temp files left
+  behind by a crashed or killed update are removed on the next update once
+  they are older than this.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+- ➕ Added `cvd config set --atomic-replace/--no-atomic-replace` (default: on).
+  Turn it off when database files are mount points (e.g. Docker single-file
+  bind mounts), where an atomic rename over them fails; files are then
+  overwritten in place.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
 ## Version 1.3.0
 
 - ➕ Added a `cvd status` command (alias `s`) that reports the status of all

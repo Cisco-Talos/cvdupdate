@@ -25,6 +25,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import sys
 import time
 import uuid
@@ -79,6 +80,13 @@ class CVDUpdate:
         "dbs_directory":  str(Path.home() / ".cvdupdate" / "database"),
         "cdiffs_rotate":  True,
         "cdiffs_to_keep": 30,
+
+        # Swap downloaded databases into place with an atomic rename. Disable when the
+        # database files themselves are mount points (e.g. Docker single-file bind mounts),
+        # where a rename over them fails; the file is then overwritten in place instead.
+        "atomic_replace": True,
+        # Leftover temp files from interrupted downloads older than this are removed on update.
+        "tmp_max_age_hours": 4,
 
         # Resolved at load time to "<config dir>/state.json" when not set, so it
         # stays next to the config (and out of the served database directory).
@@ -138,6 +146,8 @@ class CVDUpdate:
         cdiffs_to_keep: int = 0,
         state_file: str     = "",
         verbose: bool       = False,
+        atomic_replace: bool  = None,
+        tmp_max_age_hours: int = 0,
     ) -> None:
         """
         CVDUpdate class.
@@ -154,6 +164,8 @@ class CVDUpdate:
             cdiffs_to_keep: Number of CDIFF files to keep. Default: 30.
             state_file:     Path to the state file.
             verbose:        Enable DEBUG-level logs. Default: False.
+            atomic_replace: Swap databases into place with an atomic rename. Default: True.
+            tmp_max_age_hours: Remove leftover download temp files older than this. Default: 4.
         """
         try:
             self.version = _get_version('cvdupdate')
@@ -171,7 +183,9 @@ class CVDUpdate:
             dbs_directory,
             cdiffs_rotate,
             cdiffs_to_keep,
-            state_file)
+            state_file,
+            atomic_replace,
+            tmp_max_age_hours)
         self._init_logging()
 
     def _init_logging(self) -> None:
@@ -232,7 +246,9 @@ class CVDUpdate:
                      dbs_directory: str,
                      cdiffs_rotate: Optional[bool],
                      cdiffs_to_keep: int,
-                     state_file: str) -> None:
+                     state_file: str,
+                     atomic_replace: Optional[bool] = None,
+                     tmp_max_age_hours: int = 0) -> None:
         """
         Read in the config file.
         Create a new one if one does not already exist.
@@ -342,6 +358,15 @@ class CVDUpdate:
             need_save = True
         if state_file != "":
             self.config["state_file"] = state_file
+            need_save = True
+        if atomic_replace is not None:
+            self.config["atomic_replace"] = atomic_replace
+            need_save = True
+        if tmp_max_age_hours != 0:
+            self.config["tmp_max_age_hours"] = tmp_max_age_hours
+            need_save = True
+        if self.config["tmp_max_age_hours"] < 1:
+            self.config["tmp_max_age_hours"] = self.default_config["tmp_max_age_hours"]
             need_save = True
 
         self.dbs_directory = Path(self.config["dbs_directory"])
@@ -781,54 +806,83 @@ class CVDUpdate:
         '''
         ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
+        target_db = self.dbs_directory / db
+        # The body is streamed into a temp file next to the target (same directory, so same filesystem)
+        # and only swapped in with an atomic os.replace() once it is complete and validated.
+        tmp_db = target_db.with_name(f".{target_db.name}.tmp")
+
         retry = 0
         response = None
-        while retry < self.config['max_retries']:
-            response = requests.get(url, headers = {
-                'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
-                'If-Modified-Since': ims,
-            })
+        try:
+            while retry < self.config['max_retries']:
+                response = requests.get(url, stream=True, headers = {
+                    'User-Agent': f'CVDUPDATE/{self.version} ({self.state["uuid"]})',
+                    'If-Modified-Since': ims,
+                })
 
-            if ((response.status_code == 200 or response.status_code == 206) and
-                ('content-length' in response.headers) and
-                (int(response.headers['content-length']) > len(response.content))):
-                self.logger.warning(f"Response was truncated somehow...")
-                self.logger.warning(f"   Expected {response.headers['content-length']}")
-                self.logger.warning(f"   Received {response.content}, let's retry.")
-                retry += 1
-            else:
-                break
-        if response is None:
-            self.logger.error(f"No response received requesting {url}.")
-            return CvdStatus.ERROR
+                if response.status_code != 200:
+                    break
 
-        if response.status_code == 200:
-            # Looks like we downloaded something...
-            if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
-                self.logger.error(f"Failed to download {db}")
+                received = 0
+                with tmp_db.open('wb') as new_db:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        new_db.write(chunk)
+                        received += len(chunk)
+                    new_db.flush()
+                    os.fsync(new_db.fileno())
+                response.close()
+
+                if (('content-length' in response.headers) and
+                    (int(response.headers['content-length']) > received)):
+                    self.logger.warning(f"Response was truncated somehow...")
+                    self.logger.warning(f"   Expected {response.headers['content-length']}")
+                    self.logger.warning(f"   Received {received} bytes, let's retry.")
+                    retry += 1
+                else:
+                    break
+            if response is None:
+                self.logger.error(f"No response received requesting {url}.")
                 return CvdStatus.ERROR
 
-            # Download Success
-            if version > 0:
-                self.logger.info(f"Downloaded {db}. Version: {version}")
-            else:
-                self.logger.info(f"Downloaded {db}")
+            if response.status_code == 200:
+                # Looks like we downloaded something...
+                if retry >= self.config['max_retries']:
+                    self.logger.error(f"Failed to download {db}")
+                    return CvdStatus.ERROR
 
-            try:
-                with (self.dbs_directory / db).open('wb') as new_db:
-                    new_db.write(response.content)
+                # Make sure we got a real database and not e.g. an error/upsell page served with HTTP 200.
+                problem = self._validate_db_file(db, tmp_db, version)
+                if problem is not None:
+                    self.logger.error(f"Refusing to save {db} downloaded from {url}: {problem}")
+                    return CvdStatus.ERROR
+
+                # Download Success
+                if version > 0:
+                    self.logger.info(f"Downloaded {db}. Version: {version}")
+                else:
+                    self.logger.info(f"Downloaded {db}")
+
+                self._install_db_file(tmp_db, target_db)
 
                 # Update config w/ new db info
                 self.state['dbs'][db]['last modified'] = time.time()
                 if db.endswith('.cvd'):
-                    self.state['dbs'][db]['local version'] = self._get_version_from_cvd_header(response.content[:96])
+                    self.state['dbs'][db]['local version'] = self._get_cvd_version_from_file(target_db)
 
-            except Exception as exc:
-                self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
-                self.logger.error(f"Failed to save {db} to {self.dbs_directory}")
-                return CvdStatus.ERROR
+        except Exception as exc:
+            self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
+            self.logger.error(f"Failed to download and save {db} to {self.dbs_directory}")
+            return CvdStatus.ERROR
 
-        elif response.status_code == 304:
+        finally:
+            # Never leave a partial or rejected download behind in the database directory.
+            if tmp_db.exists():
+                try:
+                    os.remove(tmp_db)
+                except OSError as exc:
+                    self.logger.debug(f"Failed to remove {tmp_db}: {exc}")
+
+        if response.status_code == 304:
             # Not modified since IMS. We have the latest version.
             version = self.state['dbs'][db]['local version']
             self.logger.info(f"{db} not-modified since: {ims} (local version {version})")
@@ -860,7 +914,7 @@ class CVDUpdate:
             # We'll have to retry after the cooldown.
             return CvdStatus.ERROR
 
-        else:
+        elif response.status_code != 200:
             # HTTP Get failed.
             self.logger.error(f"Failed to download {db} from {url}")
             return CvdStatus.ERROR
@@ -874,6 +928,38 @@ class CVDUpdate:
             version=version)
 
         return CvdStatus.UPDATED
+
+    def _install_db_file(self, tmp_db: Path, target_db: Path) -> None:
+        '''
+        Move a fully downloaded and validated temp file into place.
+        '''
+        if self.config['atomic_replace']:
+            os.replace(tmp_db, target_db)
+            return
+
+        # Overwrite the existing file in place, keeping its inode. This works when the target
+        # is a mount point (where rename/unlink fail with EBUSY), but readers may briefly see
+        # a partially written file. The temp file is removed by the caller.
+        with tmp_db.open('rb') as src, target_db.open('wb') as dst:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
+
+    def _clean_stale_tmp_files(self) -> None:
+        '''
+        Remove temp files left behind by downloads that were interrupted by a crash or kill.
+        Recent temp files are kept, since another cvdupdate process may still be writing them.
+        '''
+        max_age_seconds = self.config['tmp_max_age_hours'] * 60 * 60
+        now = time.time()
+
+        for tmp_file in self.dbs_directory.glob('.*.tmp'):
+            try:
+                if tmp_file.is_file() and now - tmp_file.stat().st_mtime > max_age_seconds:
+                    os.remove(tmp_file)
+                    self.logger.info(f"Removed stale temp file {tmp_file.name}")
+            except OSError as exc:
+                self.logger.warning(f"Failed to remove stale temp file {tmp_file}: {exc}")
 
     def _download_cdiff(self, db: str, file: str, db_url: str, last_modified: int, desired_version: int, available_version: int) -> CvdStatus:
         '''
@@ -927,8 +1013,12 @@ class CVDUpdate:
 
             # Prune old CDIFFs if needed
             if len(self.state['dbs'][db]['CDIFFs']) > self.config['cdiffs_to_keep']:
+                oldest_cdiff = self.dbs_directory / self.state['dbs'][db]['CDIFFs'][0]
                 try:
-                    os.remove(self.dbs_directory / self.state['dbs'][db]['CDIFFs'][0])
+                    os.remove(oldest_cdiff)
+                    oldest_cdiff_sign = Path(str(oldest_cdiff) + ".sign")
+                    if oldest_cdiff_sign.exists():
+                        os.remove(oldest_cdiff_sign)
                 except Exception as exc:
                     self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
                     self.logger.debug(f"Tried to prune old cdiffs, but they weren't found, maybe someone else removed them already.")
@@ -970,32 +1060,40 @@ class CVDUpdate:
     def _download_sign_file_for(self, file: str, file_url: str, last_modified: int, version=0) -> CvdStatus:
         '''
         Download signature file given a file name.
-        If version > 0, will ensure sign file includes version in the filename, like this:
-        - file-version.ext.sign
+        Save the signature locally as "<local file>.sign", but derive the remote
+        signature filename from the origin URL basename.
         '''
         ims: str = datetime.datetime.fromtimestamp(last_modified, tz=datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-        sign_file = file + ".sign"
-        if version > 0 and str(version) not in file:
-            # the sign file name should include the version in this format: "file-version.ext.sign"
-            # reconstruct.
-            name_parts = file.rsplit('.', 1)
+        local_sign_file = file + ".sign"
+
+        # Determine the origin file name from URL path (ignore query string/fragments).
+        remote_file = file_url.rsplit('/', 1)[-1].split('?', 1)[0].split('#', 1)[0]
+        if remote_file == "":
+            self.logger.error(f"Invalid URL for signature download: {file_url}")
+            return CvdStatus.ERROR
+
+        remote_sign_file = remote_file + ".sign"
+        if version > 0 and str(version) not in remote_file:
+            # The remote sign file may include a version in this format:
+            # "origin-file-version.ext.sign"
+            name_parts = remote_file.rsplit('.', 1)
             if len(name_parts) == 1:
-                self.logger.error(f"Invalid file name. Lacks extension: {file}")
+                self.logger.error(f"Invalid origin file name. Lacks extension: {remote_file}")
                 return CvdStatus.ERROR
 
             file_name = name_parts[0]
             ext = name_parts[-1]
-            sign_file = f"{file_name}-{version}.{ext}.sign"
+            remote_sign_file = f"{file_name}-{version}.{ext}.sign"
 
         # check if we already have it.
-        if (self.dbs_directory / sign_file).exists():
-            self.logger.debug(f"We already have {sign_file}. Skipping...")
+        if (self.dbs_directory / local_sign_file).exists():
+            self.logger.debug(f"We already have {local_sign_file}. Skipping...")
             return CvdStatus.NO_UPDATE
 
-        # now remove the old file name from the file_url and add the new sign file name
+        # now remove the old file name from the file_url and add the origin sign file name
         base_url = file_url.rsplit('/', 1)[0]
-        url = f"{base_url}/{sign_file}"
+        url = f"{base_url}/{remote_sign_file}"
 
         retry = 0
         response = None
@@ -1021,32 +1119,32 @@ class CVDUpdate:
         if response.status_code == 200:
             # Looks like we downloaded something...
             if (('content-length' in response.headers) and int(response.headers['content-length']) > len(response.content)):
-                self.logger.error(f"Failed to download {sign_file}")
+                self.logger.error(f"Failed to download {remote_sign_file}")
                 return CvdStatus.ERROR
 
             # Download Success
             if version > 0:
-                self.logger.info(f"Downloaded {sign_file}. Version: {version}")
+                self.logger.info(f"Downloaded {remote_sign_file}. Version: {version}")
             else:
-                self.logger.info(f"Downloaded {sign_file}")
+                self.logger.info(f"Downloaded {remote_sign_file}")
 
             try:
-                with (self.dbs_directory / sign_file).open('wb') as new_db:
+                with (self.dbs_directory / local_sign_file).open('wb') as new_db:
                     new_db.write(response.content)
 
             except Exception as exc:
                 self.logger.debug(f"EXCEPTION OCCURRED: {exc}")
-                self.logger.error(f"Failed to save {sign_file} to {self.dbs_directory}")
+                self.logger.error(f"Failed to save {local_sign_file} to {self.dbs_directory}")
                 return CvdStatus.ERROR
 
         elif response.status_code == 304:
             # Not modified since IMS. We have the latest version.
-            self.logger.info(f"{sign_file} not-modified since: {ims} (local version {version})")
+            self.logger.info(f"{local_sign_file} not-modified since: {ims} (local version {version})")
             return CvdStatus.NO_UPDATE
 
         elif response.status_code == 429:
             # Rejected because downloading the same file too frequently.
-            self.logger.warning(f"Failed to download {sign_file} from {url} with 429 response.")
+            self.logger.warning(f"Failed to download {remote_sign_file} from {url} with 429 response.")
             return CvdStatus.ERROR
 
         else:
@@ -1132,6 +1230,141 @@ class CVDUpdate:
         url = f"{self.state['dbs'][db]['url']}?version={desired_version}"
 
         return self._download_db_from_url(db, url, last_modified=0, version=desired_version)
+
+    # Line-based signature formats, mirroring the ClamAV loaders in libclamav/readdb.c:
+    # extension -> (field separator, min fields, max fields or None, empty lines allowed).
+    # ClamAV only treats '#' in the first column as a comment, and only the regex list (.pdb/.gdb/.wdb)
+    # and .crb loaders skip empty lines; elsewhere an empty line fails the whole database.
+    TEXT_DB_FORMATS = {
+        # cli_loadhash()
+        'hdb': (':', 3, 5, False), 'hsb': (':', 3, 5, False), 'hdu': (':', 3, 5, False), 'hsu': (':', 3, 5, False),
+        'mdb': (':', 3, 5, False), 'msb': (':', 3, 5, False), 'mdu': (':', 3, 5, False), 'msu': (':', 3, 5, False),
+        'fp':  (':', 3, 5, False), 'sfp': (':', 3, 5, False), 'imp': (':', 3, 5, False),
+        # cli_loadndb()
+        'ndb': (':', 4, 6, False), 'ndu': (':', 4, 6, False), 'sdb': (':', 4, 6, False),
+        # cli_loadldb()
+        'ldb': (';', 4, None, False), 'ldu': (';', 4, None, False),
+        # cli_loadcdb(), cli_loadftm(), cli_loadidb(), cli_loadmd()
+        'cdb': (':', 10, 12, False),
+        'ftm': (':', 6, 8, False),
+        'idb': (':', 4, 4, False),
+        'zmd': (':', 9, 9, False), 'rmd': (':', 9, 9, False),
+        # cli_loadcrt(), cli_loadpwdb()
+        'crb': (';', 11, 13, True),
+        'pwdb': (';', 4, None, False),
+        # load_regex_matcher(); the line type is checked separately
+        'pdb': (':', 2, None, True), 'gdb': (':', 2, None, True), 'wdb': (':', 2, None, True),
+        # cli_loadign(); checked separately
+        'ign': (':', 1, 3, False), 'ign2': (':', 1, 3, False),
+    }
+
+    # Line types accepted by load_regex_matcher(): .pdb/.gdb are loaded as a block list, .wdb as an allow list.
+    REGEX_LIST_TYPES = {
+        'pdb': (b'RHS', b'WFP'), 'gdb': (b'RHS', b'WFP'),
+        'wdb': (b'XYMS', b'W'),
+    }
+
+    def _validate_db_file(self, db: str, path: Path, version: int = 0) -> Optional[str]:
+        '''
+        Sanity check a downloaded database file before it replaces the local copy.
+        The file is read line by line, so memory usage does not grow with the database size.
+
+        Returns None if the content looks valid, otherwise a short description of the problem.
+        '''
+        ext = db.rsplit('.', 1)[-1].lower() if '.' in db else ''
+
+        with path.open('rb') as db_file:
+            head = db_file.read(512)
+
+            if ext in ('cvd', 'cld', 'cud'):
+                if not head.startswith(b'ClamAV-VDB:') or len(head) < 512:
+                    return "missing or truncated ClamAV-VDB header"
+                header_version = self._get_version_from_cvd_header(head[:96])
+                if header_version == 0:
+                    return "unable to read version from ClamAV-VDB header"
+                # The advertised version may lag behind what the server already publishes,
+                # so a newer database is fine. An older one means a stale mirror/cache.
+                if version > 0 and header_version < version:
+                    return f"header version {header_version} is older than expected version {version}"
+                if version > 0 and header_version > version:
+                    self.logger.warning(f"{db} header version {header_version} is newer than advertised version {version}")
+                return None
+
+            # An empty text database is valid, e.g. a provider's currently empty allow/ignore list.
+            if len(head) == 0:
+                return None
+
+            stripped_head = head.lstrip().lower()
+            if stripped_head.startswith(b'<!doctype') or stripped_head.startswith(b'<html'):
+                return "received an HTML page instead of a database"
+
+            if ext not in self.TEXT_DB_FORMATS:
+                return None
+
+            separator, min_fields, max_fields, empty_lines_allowed = self.TEXT_DB_FORMATS[ext]
+            separator = separator.encode()
+            max_split = max_fields if max_fields is not None else min_fields - 1
+
+            db_file.seek(0)
+            for line_number, line in enumerate(db_file, start=1):
+                if b'\x00' in line:
+                    return f"line {line_number} contains unexpected binary data"
+                # Like ClamAV: '#' only counts as a comment in the first column, and only CR/LF are trimmed.
+                if line[:1] == b'#':
+                    continue
+                line = line.rstrip(b'\r\n')
+                if not line:
+                    if empty_lines_allowed:
+                        continue
+                    return f"line {line_number} is empty, which ClamAV rejects in .{ext} files"
+
+                if ext in ('ign', 'ign2'):
+                    problem = self._check_ign_line(line)
+                elif ext in self.REGEX_LIST_TYPES:
+                    problem = self._check_regex_list_line(line, *self.REGEX_LIST_TYPES[ext])
+                else:
+                    fields = line.split(separator, max_split)
+                    problem = None
+                    if len(fields) < min_fields:
+                        problem = f"expected at least {min_fields} fields"
+                    elif max_fields is not None and len(fields) > max_fields:
+                        problem = f"expected at most {max_fields} fields"
+                if problem is not None:
+                    return f"line {line_number} is not a valid .{ext} entry ({problem}): {line[:100]!r}"
+
+        return None
+
+    @staticmethod
+    def _check_regex_list_line(line: bytes, line_types: bytes, hash_types: bytes) -> Optional[str]:
+        '''
+        Check a .pdb/.gdb/.wdb line the way ClamAV's load_regex_matcher() parses it:
+        "<type>[flags]:<pattern>", where "S" lines carry "<hash type>:<hash>" as the pattern.
+        '''
+        if line[0] not in line_types:
+            return f"line type must be one of {line_types.decode()}"
+        pattern_start = line.find(b':')
+        if pattern_start == -1:
+            return "missing ':' after the line type"
+        pattern = line[pattern_start + 1:]
+        if line[0] == ord('S') and (len(pattern) < 2 or pattern[0] not in hash_types or pattern[1] != ord(':')):
+            return f"S lines must use one of the {hash_types.decode()} hash types"
+        return None
+
+    @staticmethod
+    def _check_ign_line(line: bytes) -> Optional[str]:
+        '''
+        Check an .ign/.ign2 line the way ClamAV's cli_loadign() parses it:
+        "SigName", "SigName:md5" or the legacy "db:line:SigName".
+        '''
+        fields = line.split(b':')
+        if len(fields) > 3:
+            return "too many fields"
+        signame = fields[2] if len(fields) == 3 else fields[0]
+        if signame == b'':
+            return "empty signature name"
+        if len(fields) == 2 and not re.fullmatch(rb'[0-9a-fA-F]{32}', fields[1]):
+            return "second field is not an MD5 hash"
+        return None
 
     def _get_version_from_cvd_header(self, cvd_header: bytes) -> int:
         '''
@@ -1224,6 +1457,8 @@ class CVDUpdate:
         if not self.dbs_directory.exists():
             os.makedirs(self.dbs_directory)
 
+        self._clean_stale_tmp_files()
+
         # Check if there is a newer version of CVD-Update
         self.pypi_update_check()
 
@@ -1307,32 +1542,46 @@ class CVDUpdate:
                     self.state['dbs'][db]['url'],
                     self.state['dbs'][db]['last modified'])
 
+        # Databases advertised through the DNS TXT record (and so through dns.txt) that are up-to-date after this run.
+        dns_dbs_current = set()
+
+        def run(db) -> None:
+            status = update(db)
+            if status == CvdStatus.ERROR:
+                self.update_errors += 1
+            else:
+                if status == CvdStatus.UPDATED:
+                    self.dbs_updated += 1
+                if self.state['dbs'][db].get('DNS field', 0) > 0:
+                    dns_dbs_current.add(db)
+
         if db == "":
             # Update every DB.
             for db in self.state['dbs']:
-                status = update(db)
-                if status == CvdStatus.ERROR:
-                    self.update_errors += 1
-                elif status == CvdStatus.UPDATED:
-                    self.dbs_updated += 1
+                run(db)
 
         else:
             # Update a specific DB.
             if db not in self.state['dbs']:
                 self.logger.error(f"Update failed. Unknown database: {db}")
             else:
-                status = update(db)
-                if status == CvdStatus.ERROR:
-                    self.update_errors += 1
-                elif status == CvdStatus.UPDATED:
-                    self.dbs_updated += 1
+                run(db)
 
         self._save_config()
 
-        if self.update_errors == 0 and self.dbs_updated > 0:
-            with (self.dbs_directory / 'dns.txt').open('w') as dns_file:
-                dns_file.write(':'.join(self.dns_version_tokens))
-            self.logger.debug(f"Updated {self.dbs_directory / 'dns.txt'}")
+        # dns.txt only describes the DNS-advertised databases (main, daily, bytecode), so errors in
+        # other databases must not hold it back. Publish it only when every one of them is current,
+        # otherwise clients would be told about versions this mirror does not have.
+        dns_dbs = {name for name, info in self.state['dbs'].items() if info.get('DNS field', 0) > 0}
+        if dns_dbs and dns_dbs <= dns_dbs_current:
+            dns_txt = self.dbs_directory / 'dns.txt'
+            dns_content = ':'.join(self.dns_version_tokens)
+            if not dns_txt.exists() or dns_txt.read_text() != dns_content:
+                with dns_txt.open('w') as dns_file:
+                    dns_file.write(dns_content)
+                self.logger.debug(f"Updated {dns_txt}")
+        elif dns_dbs:
+            self.logger.debug(f"Not updating dns.txt: not all of {', '.join(sorted(dns_dbs))} are up-to-date in this run")
 
         return self.update_errors
 
@@ -1401,9 +1650,14 @@ class CVDUpdate:
             return False
 
         try:
-            if (self.dbs_directory / db).exists():
-                os.remove(str(self.dbs_directory / db))
+            db_path = self.dbs_directory / db
+            if db_path.exists():
+                os.remove(str(db_path))
                 self.logger.info(f"Deleted {db} from database directory.")
+                db_sign_path = Path(str(db_path) + ".sign")
+                if db_sign_path.exists():
+                    os.remove(str(db_sign_path))
+                    self.logger.info(f"Deleted {db}.sign from database directory.")
 
         except Exception as exc:
             self.logger.debug(f"An exception occured: {exc}")
@@ -1411,9 +1665,14 @@ class CVDUpdate:
 
         for cdiff in self.state['dbs'][db]['CDIFFs']:
             try:
-                if (self.dbs_directory / cdiff).exists():
-                    os.remove(str(self.dbs_directory / cdiff))
+                cdiff_path = self.dbs_directory / cdiff
+                if cdiff_path.exists():
+                    os.remove(str(cdiff_path))
                     self.logger.info(f"Deleted {cdiff} from database directory.")
+                    cdiff_sign_path = Path(str(cdiff_path) + ".sign")
+                    if cdiff_sign_path.exists():
+                        os.remove(str(cdiff_sign_path))
+                        self.logger.info(f"Deleted {cdiff}.sign from database directory.")
 
             except Exception as exc:
                 self.logger.debug(f"An exception occured: {exc}")

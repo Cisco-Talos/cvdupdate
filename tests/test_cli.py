@@ -208,6 +208,19 @@ def test_config_set_logdir_respects_explicit_no_logs(revert_homedir, tmp_path):
     assert cfg_json['logs_enabled'] is False
 
 
+def test_config_set_atomic_replace_and_tmp_max_age(revert_homedir, tmp_path):
+    cfg = _init_config(tmp_path)
+    assert _load_config(tmp_path)['atomic_replace'] is True
+    assert _load_config(tmp_path)['tmp_max_age_hours'] == 4
+
+    result = CliRunner().invoke(
+        cli, ['config', 'set', '--config', cfg, '--no-atomic-replace', '--tmp-max-age-hours', '12'])
+    assert result.exit_code == 0
+    cfg_json = _load_config(tmp_path)
+    assert cfg_json['atomic_replace'] is False
+    assert cfg_json['tmp_max_age_hours'] == 12
+
+
 # --- serve -----------------------------------------------------------------
 
 def test_serve_help_documents_default_and_random_port():
