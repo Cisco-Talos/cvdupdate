@@ -550,3 +550,65 @@ def test_clean_stale_tmp_files_removes_only_old_temp_files(revert_homedir, tmp_p
     assert fresh_tmp.exists()
     assert old_db.exists()
     assert old_plain_tmp.exists()
+
+
+def _dns_update_client(tmp_path, monkeypatch, cvd_status, extra_status):
+    db_dir = tmp_path / 'db'
+    db_dir.mkdir()
+    c = CVDUpdate(
+        config=str(tmp_path / 'config.json'),
+        state_file=str(tmp_path / 'state.json'),
+        dbs_directory=str(db_dir),
+    )
+    c.state['dbs']['extra.ndb'] = dict(THIRD_PARTY_DB_STATE, url='https://example.com/extra.ndb', **{'DNS field': 0})
+
+    def fake_dns_query():
+        c.dns_version_tokens = ['0.103.12', '62', '27000', '1700000000', '0', '0', '0', '334']
+        return True
+
+    monkeypatch.setattr(c, 'pypi_update_check', lambda: None)
+    monkeypatch.setattr(c, '_query_dns_txt_entry', fake_dns_query)
+    monkeypatch.setattr(c, '_query_cvd_version_dns', lambda db: 1)
+    monkeypatch.setattr(c, '_download_cvd', lambda db, version: cvd_status(db))
+    monkeypatch.setattr(c, '_download_db_from_url', lambda db, url, last_modified, version=0: extra_status)
+    return c, db_dir / 'dns.txt'
+
+
+def test_dns_txt_written_when_only_extra_database_fails(revert_homedir, tmp_path, monkeypatch):
+    c, dns_txt = _dns_update_client(tmp_path, monkeypatch, lambda db: CvdStatus.NO_UPDATE, CvdStatus.ERROR)
+
+    errors = c.db_update()
+
+    assert errors == 1
+    assert dns_txt.read_text() == '0.103.12:62:27000:1700000000:0:0:0:334'
+
+
+def test_dns_txt_not_written_when_a_dns_database_fails(revert_homedir, tmp_path, monkeypatch):
+    c, dns_txt = _dns_update_client(
+        tmp_path, monkeypatch,
+        lambda db: CvdStatus.ERROR if db == 'daily.cvd' else CvdStatus.UPDATED, CvdStatus.UPDATED)
+
+    errors = c.db_update()
+
+    assert errors == 1
+    assert not dns_txt.exists()
+
+
+def test_dns_txt_not_written_for_single_database_update(revert_homedir, tmp_path, monkeypatch):
+    c, dns_txt = _dns_update_client(tmp_path, monkeypatch, lambda db: CvdStatus.UPDATED, CvdStatus.UPDATED)
+
+    assert c.db_update('daily.cvd') == 0
+
+    # main.cvd and bytecode.cvd were not checked in this run.
+    assert not dns_txt.exists()
+
+
+def test_dns_txt_not_rewritten_when_unchanged(revert_homedir, tmp_path, monkeypatch):
+    c, dns_txt = _dns_update_client(tmp_path, monkeypatch, lambda db: CvdStatus.NO_UPDATE, CvdStatus.NO_UPDATE)
+    dns_txt.write_text('0.103.12:62:27000:1700000000:0:0:0:334')
+    old = time.time() - 60 * 60
+    os.utime(dns_txt, (old, old))
+
+    assert c.db_update() == 0
+
+    assert dns_txt.stat().st_mtime == old

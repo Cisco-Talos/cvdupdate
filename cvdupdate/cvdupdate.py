@@ -1542,32 +1542,46 @@ class CVDUpdate:
                     self.state['dbs'][db]['url'],
                     self.state['dbs'][db]['last modified'])
 
+        # Databases advertised through the DNS TXT record (and so through dns.txt) that are up-to-date after this run.
+        dns_dbs_current = set()
+
+        def run(db) -> None:
+            status = update(db)
+            if status == CvdStatus.ERROR:
+                self.update_errors += 1
+            else:
+                if status == CvdStatus.UPDATED:
+                    self.dbs_updated += 1
+                if self.state['dbs'][db].get('DNS field', 0) > 0:
+                    dns_dbs_current.add(db)
+
         if db == "":
             # Update every DB.
             for db in self.state['dbs']:
-                status = update(db)
-                if status == CvdStatus.ERROR:
-                    self.update_errors += 1
-                elif status == CvdStatus.UPDATED:
-                    self.dbs_updated += 1
+                run(db)
 
         else:
             # Update a specific DB.
             if db not in self.state['dbs']:
                 self.logger.error(f"Update failed. Unknown database: {db}")
             else:
-                status = update(db)
-                if status == CvdStatus.ERROR:
-                    self.update_errors += 1
-                elif status == CvdStatus.UPDATED:
-                    self.dbs_updated += 1
+                run(db)
 
         self._save_config()
 
-        if self.update_errors == 0 and self.dbs_updated > 0:
-            with (self.dbs_directory / 'dns.txt').open('w') as dns_file:
-                dns_file.write(':'.join(self.dns_version_tokens))
-            self.logger.debug(f"Updated {self.dbs_directory / 'dns.txt'}")
+        # dns.txt only describes the DNS-advertised databases (main, daily, bytecode), so errors in
+        # other databases must not hold it back. Publish it only when every one of them is current,
+        # otherwise clients would be told about versions this mirror does not have.
+        dns_dbs = {name for name, info in self.state['dbs'].items() if info.get('DNS field', 0) > 0}
+        if dns_dbs and dns_dbs <= dns_dbs_current:
+            dns_txt = self.dbs_directory / 'dns.txt'
+            dns_content = ':'.join(self.dns_version_tokens)
+            if not dns_txt.exists() or dns_txt.read_text() != dns_content:
+                with dns_txt.open('w') as dns_file:
+                    dns_file.write(dns_content)
+                self.logger.debug(f"Updated {dns_txt}")
+        elif dns_dbs:
+            self.logger.debug(f"Not updating dns.txt: not all of {', '.join(sorted(dns_dbs))} are up-to-date in this run")
 
         return self.update_errors
 

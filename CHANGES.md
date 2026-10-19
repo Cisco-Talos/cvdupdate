@@ -46,6 +46,14 @@
 
   [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
 
+- 🐛 Fixed `dns.txt` not being updated when an additional (non-DNS) database
+  failed to update. `dns.txt` is now written whenever every database
+  advertised through DNS (`main`, `daily`, `bytecode`) is up-to-date after the
+  run, regardless of errors in other databases, and only if its content
+  changed. It is not written when only a single database is updated.
+
+  [GitHub Pull-Request](https://github.com/Cisco-Talos/cvdupdate/pull/92)
+
 - ➕ Added `cvd config set --tmp-max-age-hours` (default `4`): temp files left
   behind by a crashed or killed update are removed on the next update once
   they are older than this.
