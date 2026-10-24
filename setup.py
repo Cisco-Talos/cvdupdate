@@ -13,7 +13,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Cisco-Talos/cvdupdate",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(exclude=["tests", "tests.*"]),
     entry_points={
         "console_scripts": [
             "cvdupdate = cvdupdate.__main__:cli",
